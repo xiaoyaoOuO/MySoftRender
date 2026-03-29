@@ -1,12 +1,57 @@
 [
 {
   "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
-  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/include -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/mySoftRender.dir/src/main.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/src/main.cpp",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/stb-src -g -std=c++20 -o CMakeFiles/stb_image_wrapper.dir/src/stb_image_impl.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/src/stb_image_impl.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/src/stb_image_impl.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/imgui.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/imgui_draw.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_draw.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_draw.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/imgui_tables.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_tables.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_tables.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/imgui_widgets.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_widgets.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_widgets.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/imgui_demo.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_demo.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/imgui_demo.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/backends/imgui_impl_sdl2.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends/imgui_impl_sdl2.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends/imgui_impl_sdl2.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/imgui_sdl.dir/_deps/imgui-src/backends/imgui_impl_sdlrenderer2.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends/imgui_impl_sdlrenderer2.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends/imgui_impl_sdlrenderer2.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/include -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/stb-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/mySoftRender.dir/src/main.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/src/main.cpp",
   "file": "/home/xiaoyao/Desktop/mySoftRender/src/main.cpp"
 },
 {
   "directory": "/home/xiaoyao/Desktop/mySoftRender/build",
-  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/include -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/mySoftRender.dir/src/software_renderer.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/src/software_renderer.cpp",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/include -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/stb-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2 -g -std=c++20 -o CMakeFiles/mySoftRender.dir/src/software_renderer.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/src/software_renderer.cpp",
   "file": "/home/xiaoyao/Desktop/mySoftRender/src/software_renderer.cpp"
+},
+{
+  "directory": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/glm",
+  "command": "/usr/bin/g++  -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src -g -std=c++20 -o CMakeFiles/glm.dir/detail/glm.cpp.o -c /home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src/glm/detail/glm.cpp",
+  "file": "/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src/glm/detail/glm.cpp"
 }
 ]

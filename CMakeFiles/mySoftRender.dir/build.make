@@ -108,8 +108,11 @@ mySoftRender_EXTERNAL_OBJECTS =
 mySoftRender: CMakeFiles/mySoftRender.dir/src/main.cpp.o
 mySoftRender: CMakeFiles/mySoftRender.dir/src/software_renderer.cpp.o
 mySoftRender: CMakeFiles/mySoftRender.dir/build.make
-mySoftRender: /usr/lib/x86_64-linux-gnu/libSDL2.so
+mySoftRender: _deps/glm-build/glm/libglm.a
+mySoftRender: libstb_image_wrapper.a
+mySoftRender: libimgui_sdl.a
 mySoftRender: /usr/lib/x86_64-linux-gnu/libSDL2main.a
+mySoftRender: /usr/lib/x86_64-linux-gnu/libSDL2.so
 mySoftRender: CMakeFiles/mySoftRender.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Linking CXX executable mySoftRender"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/mySoftRender.dir/link.txt --verbose=$(VERBOSE)

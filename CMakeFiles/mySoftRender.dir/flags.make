@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/g++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/home/xiaoyao/Desktop/mySoftRender/include -isystem /usr/include/SDL2
+CXX_INCLUDES = -I/home/xiaoyao/Desktop/mySoftRender/include -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/stb-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src -I/home/xiaoyao/Desktop/mySoftRender/build/_deps/imgui-src/backends -isystem /usr/include/SDL2
 
 CXX_FLAGS = -g -std=c++20
 

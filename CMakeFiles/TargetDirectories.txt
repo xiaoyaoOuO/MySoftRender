@@ -1,3 +1,10 @@
+/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/stb_image_wrapper.dir
+/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/imgui_sdl.dir
 /home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/mySoftRender.dir
 /home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/edit_cache.dir
 /home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/rebuild_cache.dir
+/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/CMakeFiles/edit_cache.dir
+/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/CMakeFiles/rebuild_cache.dir
+/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/glm/CMakeFiles/glm.dir
+/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/glm/CMakeFiles/edit_cache.dir
+/home/xiaoyao/Desktop/mySoftRender/build/_deps/glm-build/glm/CMakeFiles/rebuild_cache.dir
