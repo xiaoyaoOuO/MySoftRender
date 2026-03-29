@@ -1,2 +1,0 @@
-/usr/bin/ar qc libstb_image_wrapper.a CMakeFiles/stb_image_wrapper.dir/src/stb_image_impl.cpp.o
-/usr/bin/ranlib libstb_image_wrapper.a
