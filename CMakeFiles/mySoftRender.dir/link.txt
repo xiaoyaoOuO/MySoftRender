@@ -1,0 +1,1 @@
+/usr/bin/g++ -g CMakeFiles/mySoftRender.dir/src/main.cpp.o CMakeFiles/mySoftRender.dir/src/software_renderer.cpp.o -o mySoftRender  /usr/lib/x86_64-linux-gnu/libSDL2.so /usr/lib/x86_64-linux-gnu/libSDL2main.a 

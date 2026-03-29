@@ -1,0 +1,3 @@
+/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/mySoftRender.dir
+/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/edit_cache.dir
+/home/xiaoyao/Desktop/mySoftRender/build/CMakeFiles/rebuild_cache.dir
