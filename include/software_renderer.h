@@ -15,7 +15,6 @@ public:
     SoftwareRenderer(int width, int height);
 
     void clear(const Color& color);
-    void drawTriangle(const std::vector<Vec2>& vertexs, const std::vector<glm::vec3>& colors);
 
     const std::uint32_t* colorBuffer() const;
     int width() const;
@@ -28,7 +27,9 @@ private:
     std::vector<std::uint32_t> colorBuffer_;
 
     Rasterizer rasterizer_;
+    std::function<void(std::vector<std::uint32_t>&, const Fragment&)> fragmentShader_;
 private:
     static std::uint32_t packColor(const Color& color);
     void putPixel(int x, int y, const Color& color);
+    void putPixel(size_t index, const Color& color);
 };

@@ -1,6 +1,7 @@
 #include "software_renderer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <glm/common.hpp>
@@ -50,12 +51,21 @@ void SoftwareRenderer::putPixel(int x, int y, const Color& color)
     colorBuffer_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)] = packColor(color);
 }
 
+void SoftwareRenderer::putPixel(size_t index, const Color& color)
+{
+    if (index < colorBuffer_.size()) {
+        colorBuffer_[index] = packColor(color);
+    }
+}
+
 void SoftwareRenderer::DrawScene(const Scene& scene)
 {
     // 这里应该实现渲染算法，遍历场景中的物体并将它们渲染到 colorBuffer_ 中。
     if (!scene.camera) {
         return;
     }
+
+    rasterizer_.Clear();
     
     //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
     const glm::mat4 viewProjection = scene.camera->projectionMatrix() * scene.camera->viewMatrix();
@@ -76,63 +86,26 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             vertexs[i] /= vertexs[i].w;
         }
         // 将屏幕空间坐标转换为像素坐标
-        std::vector<glm::vec3> colors(3);
-        std::vector<glm::vec3> vertexs3D(3);
+        std::array<glm::vec3, 3> colors;
+        std::array<glm::vec3, 3> vertexs3D;
         for(int i = 0; i < 3; ++i)
         {
-            vertexs3D[i] = glm::vec3(vertexs[i]);
             colors[i] = tri->getColors()[i];
             vertexs[i].x = (vertexs[i].x + 1.0f) * 0.5f * width_;
             vertexs[i].y = (1.0f - (vertexs[i].y + 1.0f) * 0.5f) * height_; // 注意 Y 轴翻转
             vertexs[i].z = (vertexs[i].z + 1.0f) * 0.5f; // 深度值映射到 [0, 1]
+            vertexs3D[i] = glm::vec3(vertexs[i]);
         }
         rasterizer_.Rasterize_Triangle(vertexs3D, colors);
     }
 
-}
-
-void SoftwareRenderer::drawTriangle(const std::vector<Vec2>& v, const std::vector<glm::vec3>& c)
-{
-    if (v.size() < 3 || c.size() < 3) {
-        return;
-    }
-
-    int minX = static_cast<int>(std::floor(std::min({v[0].x, v[1].x, v[2].x})));
-    int maxX = static_cast<int>(std::ceil(std::max({v[0].x, v[1].x, v[2].x})));
-    int minY = static_cast<int>(std::floor(std::min({v[0].y, v[1].y, v[2].y})));
-    int maxY = static_cast<int>(std::ceil(std::max({v[0].y, v[1].y, v[2].y})));
-
-    minX = std::max(minX, 0);
-    minY = std::max(minY, 0);
-    maxX = std::min(maxX, width_ - 1);
-    maxY = std::min(maxY, height_ - 1);
-
-    if (minX > maxX || minY > maxY) {
-        return;
-    }
-
-    float area = VectorMath::edgeFunction(v[0], v[1], v[2]);
-    if (std::abs(area) <= 1e-6f) {
-        return;
-    }
-
-    const bool isAreaPositive = area > 0.0f;
-
-    for (int y = minY; y <= maxY; ++y) {
-        for (int x = minX; x <= maxX; ++x) {
-            Vec2 p{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f}; // 采样点在像素中心
-            float w0 = VectorMath::edgeFunction(v[1], v[2], p);
-            float w1 = VectorMath::edgeFunction(v[2], v[0], p);
-            float w2 = VectorMath::edgeFunction(v[0], v[1], p);
-            const bool inside = isAreaPositive
-                ? (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
-                : (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
-            if (inside) { // 点在三角形内
-                w0 /= area;
-                w1 /= area;
-                w2 /= area;
-                float depth = VectorMath::InterpDepth(v, std::vector<float>{w0, w1, w2});
-            }
+    //Fragment Shader：遍历光栅化阶段生成的片段，进行深度测试和颜色写入。
+    for(const auto& frag : rasterizer_.fragments())
+    {
+        if (fragmentShader_) {
+            fragmentShader_(colorBuffer_, frag);
+        } else {
+            putPixel(frag.bufferIndex, frag.color);
         }
     }
 }

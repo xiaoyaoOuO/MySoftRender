@@ -7,10 +7,12 @@
 #include "software_renderer.h"
 #include <iostream>
 #include <memory>
+#include <cstdio>
 
 namespace Window{
     constexpr int kWindowWidth = 960;
     constexpr int kWindowHeight = 540;
+    constexpr bool kEnablePresentVSync = false;
 }
 
 int main(int argc, char* argv[])
@@ -20,7 +22,12 @@ int main(int argc, char* argv[])
 
     Scene scene;
     scene.camera = std::make_unique<Camera>();
+    scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
     scene.objects.emplace_back(std::make_unique<Triangle>());
+    
+    Triangle* triangle = new Triangle();
+    triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
+    scene.objects.emplace_back(std::move(triangle));
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
 
@@ -43,7 +50,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    SDL_Renderer* presentRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    const Uint32 rendererFlags = SDL_RENDERER_ACCELERATED
+        | (Window::kEnablePresentVSync ? SDL_RENDERER_PRESENTVSYNC : 0u);
+    SDL_Renderer* presentRenderer = SDL_CreateRenderer(window, -1, rendererFlags);
     if (presentRenderer == nullptr) {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << '\n';
         SDL_DestroyWindow(window);
@@ -67,6 +76,10 @@ int main(int argc, char* argv[])
     }
 
     bool running = true;
+    const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
+    Uint64 fpsWindowStartCounter = SDL_GetPerformanceCounter();
+    int fpsFrameCount = 0;
+
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -93,6 +106,19 @@ int main(int argc, char* argv[])
         SDL_RenderClear(presentRenderer);
         SDL_RenderCopy(presentRenderer, framebufferTexture, nullptr, nullptr);
         SDL_RenderPresent(presentRenderer);
+
+        ++fpsFrameCount;
+        const Uint64 nowCounter = SDL_GetPerformanceCounter();
+        const double elapsedSeconds = static_cast<double>(nowCounter - fpsWindowStartCounter) / static_cast<double>(perfFrequency);
+        if (elapsedSeconds >= 0.5) {
+            const double fps = static_cast<double>(fpsFrameCount) / elapsedSeconds;
+            char title[128];
+            std::snprintf(title, sizeof(title), "mySoftRender - FPS: %.1f", fps);
+            SDL_SetWindowTitle(window, title);
+
+            fpsFrameCount = 0;
+            fpsWindowStartCounter = nowCounter;
+        }
     }
 
     SDL_DestroyTexture(framebufferTexture);

@@ -76,6 +76,7 @@ target_link_libraries(imgui_sdl PUBLIC SDL2::SDL2)
 add_executable(mySoftRender
     src/main.cpp
     src/Object.cpp
+    src/Rasterizer.cpp
     src/software_renderer.cpp
 )
 

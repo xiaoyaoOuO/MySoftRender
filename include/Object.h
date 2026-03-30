@@ -15,7 +15,7 @@ public:
         const glm::vec3& scl = glm::vec3(1.0f))
         : position(pos), rotation(rot), scale(scl) {}
 
-    virtual ~Object() = default;
+    virtual ~Object();
 
     const glm::vec3& getPosition() const { return position; }
     const glm::vec3& getRotation() const { return rotation; }

@@ -1,8 +1,12 @@
 #pragma once
 #include "Triangle.h"
+#include <array>
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <unordered_map>
 
 struct Vec2 {
     float x;
@@ -19,6 +23,7 @@ struct Color {
 struct Fragment
 {
     Vec2 screenPos; // 屏幕空间坐标
+    size_t bufferIndex; // 在帧缓冲中的线性索引
     float depth; // 深度值
     Color color; // 颜色
     glm::vec3 normal; // 法线向量
@@ -26,7 +31,7 @@ struct Fragment
 
 namespace VectorMath{
     //根据重心坐标进行颜色插值
-    Color InterpColor(const std::vector<glm::vec3>& colors, const std::vector<float>& weights)
+    inline Color InterpColor(const std::vector<glm::vec3>& colors, const std::vector<float>& weights)
     {
         glm::vec3 color(0.0f);
         for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
@@ -41,22 +46,22 @@ namespace VectorMath{
     }
 
     //根据重心坐标进行深度插值
-    float InterpDepth(const std::vector<Vec2>& vertexs, const std::vector<float>& weights)
+    inline float InterpDepth(const std::vector<glm::vec3>& vertexs, const std::vector<float>& weights)
     {
         float depth = 0.0f;
         for (size_t i = 0; i < vertexs.size() && i < weights.size(); ++i) {
-            depth += vertexs[i].y * weights[i]; // 这里假设 vertexs[i].y 存储了深度值
+            depth += vertexs[i].z * weights[i];
         }
         return depth;
     }
 
-    glm::vec3 getNormal(const glm::vec4& v0, const glm::vec4& v1, const glm::vec4& v2)
+    inline glm::vec3 getNormal(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2)
     {
-        return glm::normalize(glm::cross(glm::vec3(v1 - v0), glm::vec3(v2 - v0)));
+        return glm::normalize(glm::cross(v1 - v0, v2 - v0));
     }
 
     // 有符号面积辅助函数，用于重心坐标/点在三角形内判断。
-    float edgeFunction(const Vec2& a, const Vec2& b, const Vec2& p)
+    inline float edgeFunction(const Vec2& a, const Vec2& b, const Vec2& p)
     {
         return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
     }
@@ -77,13 +82,15 @@ public:
 
     int width() const;
     int height() const;
+    const std::vector<Fragment>& fragments() const { return fragments_; }
 
-    void Rasterize_Triangle(std::vector<glm::vec3>& vertexs, std::vector<glm::vec3>& colors);
+    void Clear();
+    void Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors);
 
 private:
     int width_;
     int height_;
 
     std::vector<float> zBuffer_; // 深度缓冲
-    std::unordered_map<std::size_t, Fragment> fragments_; // 存储片段数据，key 可以是像素坐标的哈希值
+    std::vector<Fragment> fragments_; // 光栅化阶段生成的片段列表
 };
