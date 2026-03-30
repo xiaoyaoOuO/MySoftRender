@@ -9,6 +9,22 @@ include(FetchContent)
 
 find_package(SDL2 REQUIRED)
 
+option(MYSOFTR_RENDER_DISABLE_DEP_UPDATES
+    "Disable FetchContent git update checks during configure"
+    ON)
+
+option(MYSOFTR_RENDER_OFFLINE_DEPS
+    "Use only already-populated FetchContent deps (no download/update)"
+    OFF)
+
+if(MYSOFTR_RENDER_DISABLE_DEP_UPDATES)
+    set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+endif()
+
+if(MYSOFTR_RENDER_OFFLINE_DEPS)
+    set(FETCHCONTENT_FULLY_DISCONNECTED ON)
+endif()
+
 FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
@@ -59,6 +75,7 @@ target_link_libraries(imgui_sdl PUBLIC SDL2::SDL2)
 
 add_executable(mySoftRender
     src/main.cpp
+    src/Object.cpp
     src/software_renderer.cpp
 )
 

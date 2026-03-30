@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <glm/vec3.hpp>
 #include <vector>
+#include "Scene.h"
 
 struct Vec2 {
     float x;
@@ -20,11 +22,12 @@ public:
     SoftwareRenderer(int width, int height);
 
     void clear(const Color& color);
-    void drawTriangle(Vec2 v0, Vec2 v1, Vec2 v2, const Color& color);
+    void drawTriangle(const std::vector<Vec2>& vertexs, const std::vector<glm::vec3>& colors);
 
     const std::uint32_t* colorBuffer() const;
     int width() const;
     int height() const;
+    void DrawScene(const Scene& scene);
 
 private:
     int width_;
