@@ -4,19 +4,12 @@
 #include <glm/vec3.hpp>
 #include <vector>
 #include "Scene.h"
+#include "Rasterizer.h"
 
-struct Vec2 {
-    float x;
-    float y;
-};
 
-struct Color {
-    std::uint8_t r;
-    std::uint8_t g;
-    std::uint8_t b;
-    std::uint8_t a;
-};
-
+/**
+ * @brief 软光栅渲染器
+ */
 class SoftwareRenderer {
 public:
     SoftwareRenderer(int width, int height);
@@ -34,6 +27,8 @@ private:
     int height_;
     std::vector<std::uint32_t> colorBuffer_;
 
+    Rasterizer rasterizer_;
+private:
     static std::uint32_t packColor(const Color& color);
     void putPixel(int x, int y, const Color& color);
 };

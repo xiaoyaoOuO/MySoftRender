@@ -32,5 +32,5 @@ public:
 
     const glm::vec4* getVertexs() const { return vertexs; }
     const glm::vec3* getColors() const { return colors; }
-    const glm::vec3& getNormal() const { return normal; }
+    const glm::vec3& getNormal() const { return glm::normalize(glm::cross(glm::vec3(vertexs[1] - vertexs[0]), glm::vec3(vertexs[2] - vertexs[0])));}
 };

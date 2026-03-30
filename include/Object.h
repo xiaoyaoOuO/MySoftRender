@@ -15,15 +15,15 @@ public:
         const glm::vec3& scl = glm::vec3(1.0f))
         : position(pos), rotation(rot), scale(scl) {}
 
-    virtual ~Object() = 0;
+    virtual ~Object() = default;
 
     const glm::vec3& getPosition() const { return position; }
     const glm::vec3& getRotation() const { return rotation; }
     const glm::vec3& getScale() const { return scale; }
 
-    void setPosition(const glm::vec3& pos) { position = pos; }
-    void setRotation(const glm::vec3& rot) { rotation = rot; }
-    void setScale(const glm::vec3& scl) { scale = scl; }
+    virtual void setPosition(const glm::vec3& pos) { position = pos; }
+    virtual void setRotation(const glm::vec3& rot) { rotation = rot; }
+    virtual void setScale(const glm::vec3& scl) { scale = scl; }
 
     void translate(const glm::vec3& delta) { position += delta; }
     void rotate(const glm::vec3& deltaEulerDeg) { rotation += deltaEulerDeg; }

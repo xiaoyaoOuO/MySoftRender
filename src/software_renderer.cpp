@@ -5,18 +5,12 @@
 
 #include <glm/common.hpp>
 
-namespace {
-// 有符号面积辅助函数，用于重心坐标/点在三角形内判断。
-float edgeFunction(const Vec2& a, const Vec2& b, const Vec2& p)
-{
-    return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
-}
-}
 
 SoftwareRenderer::SoftwareRenderer(int width, int height)
     // 为每个屏幕坐标分配一个 32 位像素。
-    : width_(width), height_(height), colorBuffer_(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0)
+    : width_(width), height_(height), rasterizer_(width, height)
 {
+    colorBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
 }
 
 void SoftwareRenderer::clear(const Color& color)
@@ -59,12 +53,11 @@ void SoftwareRenderer::putPixel(int x, int y, const Color& color)
 void SoftwareRenderer::DrawScene(const Scene& scene)
 {
     // 这里应该实现渲染算法，遍历场景中的物体并将它们渲染到 colorBuffer_ 中。
-    
-    //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
     if (!scene.camera) {
         return;
     }
-
+    
+    //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
     const glm::mat4 viewProjection = scene.camera->projectionMatrix() * scene.camera->viewMatrix();
     for(const auto& obj : scene.objects)
     {
@@ -79,17 +72,21 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             if (std::abs(vertexs[i].w) <= 1e-6f) {
                 vertexs[i].w = 1.0f;
             }
+            // 齐次除法，得到屏幕空间坐标
             vertexs[i] /= vertexs[i].w;
         }
-        // 齐次除法，得到屏幕空间坐标
-        Vec2 screenCoords[3];
+        // 将屏幕空间坐标转换为像素坐标
+        std::vector<glm::vec3> colors(3);
+        std::vector<glm::vec3> vertexs3D(3);
         for(int i = 0; i < 3; ++i)
         {
-            screenCoords[i].x = (vertexs[i].x + 1.0f) * 0.5f * static_cast<float>(width_ - 1);
-            screenCoords[i].y = (1.0f - (vertexs[i].y + 1.0f) * 0.5f) * static_cast<float>(height_ - 1); // 注意 y 轴需要翻转
+            vertexs3D[i] = glm::vec3(vertexs[i]);
+            colors[i] = tri->getColors()[i];
+            vertexs[i].x = (vertexs[i].x + 1.0f) * 0.5f * width_;
+            vertexs[i].y = (1.0f - (vertexs[i].y + 1.0f) * 0.5f) * height_; // 注意 Y 轴翻转
+            vertexs[i].z = (vertexs[i].z + 1.0f) * 0.5f; // 深度值映射到 [0, 1]
         }
-        // 调用 drawTriangle() 函数进行光栅化
-        drawTriangle(std::vector<Vec2>{screenCoords[0], screenCoords[1], screenCoords[2]}, std::vector<glm::vec3>{tri->getColors()[0], tri->getColors()[1], tri->getColors()[2]});
+        rasterizer_.Rasterize_Triangle(vertexs3D, colors);
     }
 
 }
@@ -114,7 +111,7 @@ void SoftwareRenderer::drawTriangle(const std::vector<Vec2>& v, const std::vecto
         return;
     }
 
-    float area = edgeFunction(v[0], v[1], v[2]);
+    float area = VectorMath::edgeFunction(v[0], v[1], v[2]);
     if (std::abs(area) <= 1e-6f) {
         return;
     }
@@ -124,9 +121,9 @@ void SoftwareRenderer::drawTriangle(const std::vector<Vec2>& v, const std::vecto
     for (int y = minY; y <= maxY; ++y) {
         for (int x = minX; x <= maxX; ++x) {
             Vec2 p{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f}; // 采样点在像素中心
-            float w0 = edgeFunction(v[1], v[2], p);
-            float w1 = edgeFunction(v[2], v[0], p);
-            float w2 = edgeFunction(v[0], v[1], p);
+            float w0 = VectorMath::edgeFunction(v[1], v[2], p);
+            float w1 = VectorMath::edgeFunction(v[2], v[0], p);
+            float w2 = VectorMath::edgeFunction(v[0], v[1], p);
             const bool inside = isAreaPositive
                 ? (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                 : (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
@@ -134,15 +131,8 @@ void SoftwareRenderer::drawTriangle(const std::vector<Vec2>& v, const std::vecto
                 w0 /= area;
                 w1 /= area;
                 w2 /= area;
-                glm::vec3 color = w0 * c[0] + w1 * c[1] + w2 * c[2];
-                putPixel(x, y, Color{
-                    static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.r * 255.0f), 0, 255)),
-                    static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.g * 255.0f), 0, 255)),
-                    static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.b * 255.0f), 0, 255)),
-                    255
-                });
+                float depth = VectorMath::InterpDepth(v, std::vector<float>{w0, w1, w2});
             }
         }
     }
-
 }
