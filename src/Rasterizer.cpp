@@ -1,5 +1,66 @@
 #include "Rasterizer.h"
 
+namespace {
+void RasterizeLine(
+    const glm::vec3& v0,
+    const glm::vec3& v1,
+    const glm::vec3& normal,
+    int width,
+    int height,
+    std::vector<float>& zBuffer,
+    std::vector<Fragment>& fragments)
+{
+    constexpr float kEdgeDepthBias = 1e-4f;
+    constexpr Color kEdgeColor = {255, 255, 255, 255};
+
+    const int x0 = static_cast<int>(std::round(v0.x));
+    const int y0 = static_cast<int>(std::round(v0.y));
+    const int x1 = static_cast<int>(std::round(v1.x));
+    const int y1 = static_cast<int>(std::round(v1.y));
+
+    const int dx = std::abs(x1 - x0);
+    const int dy = std::abs(y1 - y0);
+    const int steps = std::max(dx, dy);
+
+    auto tryEmitFragment = [&](int x, int y, float t)
+    {
+        if (x < 0 || x >= width || y < 0 || y >= height) {
+            return;
+        }
+
+        const float rawDepth = v0.z + (v1.z - v0.z) * t;
+        const float depth = std::clamp(rawDepth - kEdgeDepthBias, 0.0f, 1.0f);
+        const size_t bufferIndex = BufferIndex(x, y, width);
+        if (depth >= zBuffer[bufferIndex]) {
+            return;
+        }
+
+        zBuffer[bufferIndex] = depth;
+        Fragment frag;
+        frag.screenPos = Vec2{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
+        frag.bufferIndex = bufferIndex;
+        frag.depth = depth;
+        frag.color = kEdgeColor;
+        frag.normal = normal;
+        fragments.push_back(frag);
+    };
+
+    if (steps == 0) {
+        tryEmitFragment(x0, y0, 0.0f);
+        return;
+    }
+
+    for (int step = 0; step <= steps; ++step) {
+        const float t = static_cast<float>(step) / static_cast<float>(steps);
+        const float xf = static_cast<float>(x0) + static_cast<float>(x1 - x0) * t;
+        const float yf = static_cast<float>(y0) + static_cast<float>(y1 - y0) * t;
+        const int x = static_cast<int>(std::round(xf));
+        const int y = static_cast<int>(std::round(yf));
+        tryEmitFragment(x, y, t);
+    }
+}
+}
+
 int Rasterizer::width() const
 {
     return width_;
@@ -18,10 +79,6 @@ void Rasterizer::Clear()
 
 void Rasterizer::Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors)
 {
-    // 这里应该实现三角形光栅化算法，使用 vertexs 中的顶点坐标和 colors 中的颜色进行插值。
-    // 你可以使用边函数法或者扫描线法来实现光栅化。
-    // 注意要进行深度测试，更新 zBuffer_ 中的深度值，并且在通过测试后更新 colorBuffer_ 中的颜色值。
-
     int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
     int maxX = static_cast<int>(std::ceil(std::max({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
     int minY = static_cast<int>(std::floor(std::min({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
@@ -45,12 +102,22 @@ void Rasterizer::Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, con
         return; // 三角形退化，跳过
     }
 
+    const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
+
     const bool isAreaPositive = area > 0.0f;
     const float invArea = 1.0f / area;
 
     const float z0 = vertexs[0].z;
     const float z1 = vertexs[1].z;
     const float z2 = vertexs[2].z;
+
+    
+    if (wireframeOverlayEnabled_) {
+        RasterizeLine(vertexs[0], vertexs[1], triangleNormal, width_, height_, zBuffer_, fragments_);
+        RasterizeLine(vertexs[1], vertexs[2], triangleNormal, width_, height_, zBuffer_, fragments_);
+        RasterizeLine(vertexs[2], vertexs[0], triangleNormal, width_, height_, zBuffer_, fragments_);
+        return; // 线框模式下只绘制边线
+    }
 
     for(int j=minY;j<=maxY;j++)
     {
@@ -75,7 +142,7 @@ void Rasterizer::Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, con
                     Fragment frag;
                     frag.screenPos = p;
                     frag.depth = depth;
-                    frag.normal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
+                    frag.normal = triangleNormal;
                     const glm::vec3 color = colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
                     frag.color = Color{
                         static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.r * 255.0f), 0, 255)),

@@ -37,6 +37,14 @@ cmake --build build -j
 ./build/mySoftRender
 ```
 
+Release 构建与运行：
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release -j
+./build-release/mySoftRender
+```
+
 可选：测试 `stb_image` 加载（将图片路径作为参数传入）：
 
 ```bash

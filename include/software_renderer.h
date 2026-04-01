@@ -19,6 +19,9 @@ public:
     const std::uint32_t* colorBuffer() const;
     int width() const;
     int height() const;
+    bool wireframeOverlayEnabled() const;
+    void setWireframeOverlayEnabled(bool enabled);
+    void toggleWireframeOverlay();
     void DrawScene(const Scene& scene);
 
 private:

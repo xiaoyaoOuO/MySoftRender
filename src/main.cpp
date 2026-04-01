@@ -4,6 +4,7 @@
 #include "Object.h"
 #include "Triangle.h"
 #include "Cube.h"
+#include "Sphere.h"
 #include "software_renderer.h"
 #include <iostream>
 #include <memory>
@@ -15,21 +16,35 @@ namespace Window{
     constexpr bool kEnablePresentVSync = false;
 }
 
+void CreateScene(Scene& scene)
+{
+    scene.camera = std::make_unique<Camera>();
+    scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
+    // scene.objects.emplace_back(std::make_unique<Triangle>());
+    
+    auto triangle = std::make_unique<Triangle>();
+    triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
+    scene.objects.emplace_back(std::move(triangle));
+
+    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.8f, 0.9f, 1.0f));
+    sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
+    scene.objects.emplace_back(std::move(sphere));
+
+    auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
+    cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
+    scene.objects.emplace_back(std::move(cube));
+}
+
 int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
 
     Scene scene;
-    scene.camera = std::make_unique<Camera>();
-    scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
-    scene.objects.emplace_back(std::make_unique<Triangle>());
-    
-    Triangle* triangle = new Triangle();
-    triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
-    scene.objects.emplace_back(std::move(triangle));
+    CreateScene(scene);
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
+    std::cout << "Wireframe overlay: ON (press F1 to toggle)" << '\n';
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
@@ -78,6 +93,7 @@ int main(int argc, char* argv[])
     bool running = true;
     const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
     Uint64 fpsWindowStartCounter = SDL_GetPerformanceCounter();
+    Uint64 lastFrameCounter = fpsWindowStartCounter;
     int fpsFrameCount = 0;
 
     while (running) {
@@ -88,6 +104,12 @@ int main(int argc, char* argv[])
             }
             if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
                 running = false;
+            }
+            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F1) {
+                renderer.toggleWireframeOverlay();
+                std::cout << "Wireframe overlay: "
+                          << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
+                          << " (press F1 to toggle)" << '\n';
             }
         }
         renderer.clear({ 0, 0, 0, 255 });
@@ -109,6 +131,11 @@ int main(int argc, char* argv[])
 
         ++fpsFrameCount;
         const Uint64 nowCounter = SDL_GetPerformanceCounter();
+        {
+            const float deltaTime = static_cast<float>(nowCounter - lastFrameCounter) / static_cast<float>(perfFrequency);
+            lastFrameCounter = nowCounter;
+            scene.RotateObjects(deltaTime);
+        }
         const double elapsedSeconds = static_cast<double>(nowCounter - fpsWindowStartCounter) / static_cast<double>(perfFrequency);
         if (elapsedSeconds >= 0.5) {
             const double fps = static_cast<double>(fpsFrameCount) / elapsedSeconds;

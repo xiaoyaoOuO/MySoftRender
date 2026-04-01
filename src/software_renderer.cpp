@@ -1,4 +1,6 @@
 #include "software_renderer.h"
+#include "Sphere.h"
+#include "Cube.h"
 
 #include <algorithm>
 #include <array>
@@ -36,6 +38,21 @@ int SoftwareRenderer::height() const
     return height_;
 }
 
+bool SoftwareRenderer::wireframeOverlayEnabled() const
+{
+    return rasterizer_.wireframeOverlayEnabled();
+}
+
+void SoftwareRenderer::setWireframeOverlayEnabled(bool enabled)
+{
+    rasterizer_.setWireframeOverlayEnabled(enabled);
+}
+
+void SoftwareRenderer::toggleWireframeOverlay()
+{
+    rasterizer_.toggleWireframeOverlay();
+}
+
 std::uint32_t SoftwareRenderer::packColor(const Color& color)
 {
     // 将颜色通道打包为 0xAARRGGBB，匹配 SDL ARGB8888 纹理格式。
@@ -69,34 +86,87 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     
     //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
     const glm::mat4 viewProjection = scene.camera->projectionMatrix() * scene.camera->viewMatrix();
+
+    auto rasterizeLocalTriangle = [&](const glm::mat4& mvp,
+                                     const std::array<glm::vec4, 3>& localVertices,
+                                     const std::array<glm::vec3, 3>& colors) {
+        glm::vec4 ndcVertices[3];
+        for (int i = 0; i < 3; ++i) {
+            const glm::vec4 clipVertex = mvp * localVertices[i];
+            if (std::abs(clipVertex.w) <= 1e-6f) {
+                return;
+            }
+            ndcVertices[i] = clipVertex / clipVertex.w;
+        }
+
+        std::array<glm::vec3, 3> screenVertices;
+        for (int i = 0; i < 3; ++i) {
+            screenVertices[i].x = (ndcVertices[i].x + 1.0f) * 0.5f * width_;
+            screenVertices[i].y = (1.0f - (ndcVertices[i].y + 1.0f) * 0.5f) * height_;
+            screenVertices[i].z = (ndcVertices[i].z + 1.0f) * 0.5f;
+        }
+
+        rasterizer_.Rasterize_Triangle(screenVertices, colors);
+    };
+
     for(const auto& obj : scene.objects)
     {
-        glm::vec4 vertexs[3];
-        Triangle* tri = dynamic_cast<Triangle*>(obj.get());
-        if(tri == nullptr) continue; // 目前我们只处理三角形对象，其他类型的对象暂时跳过。
+        const glm::mat4 mvp = viewProjection * obj->modelMatrix();
 
-        const glm::mat4 mvp = viewProjection * tri->modelMatrix();
-        for(int i = 0; i < 3; ++i)
-        {
-            vertexs[i] = mvp * tri->getVertexs()[i];
-            if (std::abs(vertexs[i].w) <= 1e-6f) {
-                vertexs[i].w = 1.0f;
+        if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
+            const std::array<glm::vec4, 3> localVertices = {
+                tri->getVertexs()[0],
+                tri->getVertexs()[1],
+                tri->getVertexs()[2]
+            };
+            const std::array<glm::vec3, 3> colors = {
+                tri->getColors()[0],
+                tri->getColors()[1],
+                tri->getColors()[2]
+            };
+            rasterizeLocalTriangle(mvp, localVertices, colors);
+            continue;
+        }
+
+        if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
+            const auto& sphereVertices = sphere->vertices();
+            const auto& sphereIndices = sphere->indices();
+            const auto& sphereColors = sphere->vertexColors();
+
+            for (const glm::uvec3& face : sphereIndices) {
+                const std::array<glm::vec4, 3> localVertices = {
+                    sphereVertices[face.x],
+                    sphereVertices[face.y],
+                    sphereVertices[face.z]
+                };
+                const std::array<glm::vec3, 3> colors = {
+                    sphereColors[face.x],
+                    sphereColors[face.y],
+                    sphereColors[face.z]
+                };
+                rasterizeLocalTriangle(mvp, localVertices, colors);
             }
-            // 齐次除法，得到屏幕空间坐标
-            vertexs[i] /= vertexs[i].w;
         }
-        // 将屏幕空间坐标转换为像素坐标
-        std::array<glm::vec3, 3> colors;
-        std::array<glm::vec3, 3> vertexs3D;
-        for(int i = 0; i < 3; ++i)
-        {
-            colors[i] = tri->getColors()[i];
-            vertexs[i].x = (vertexs[i].x + 1.0f) * 0.5f * width_;
-            vertexs[i].y = (1.0f - (vertexs[i].y + 1.0f) * 0.5f) * height_; // 注意 Y 轴翻转
-            vertexs[i].z = (vertexs[i].z + 1.0f) * 0.5f; // 深度值映射到 [0, 1]
-            vertexs3D[i] = glm::vec3(vertexs[i]);
+
+        if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
+            const auto& cubeVertices = cube->vertices();
+            const auto& cubeIndices = cube->indices();
+            const auto& cubeColor = cube->color();
+
+            for (const glm::uvec3& face : cubeIndices) {
+                const std::array<glm::vec4, 3> localVertices = {
+                    glm::vec4(cubeVertices[face.x], 1.0f),
+                    glm::vec4(cubeVertices[face.y], 1.0f),
+                    glm::vec4(cubeVertices[face.z], 1.0f)
+                };
+                const std::array<glm::vec3, 3> colors = {
+                    cubeColor,
+                    cubeColor,
+                    cubeColor
+                };
+                rasterizeLocalTriangle(mvp, localVertices, colors);
+            }
         }
-        rasterizer_.Rasterize_Triangle(vertexs3D, colors);
     }
 
     //Fragment Shader：遍历光栅化阶段生成的片段，进行深度测试和颜色写入。

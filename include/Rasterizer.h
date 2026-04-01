@@ -29,6 +29,18 @@ struct Fragment
     glm::vec3 normal; // 法线向量
 };
 
+struct Edge {
+    Vec2 start;
+    Vec2 end;
+    Color colorStart;
+    Color colorEnd;
+
+    Edge(const glm::vec3& v0,const glm::vec3& v1){
+        start = Vec2{std::min(v0.x, v1.x), std::min(v0.y, v1.y)};
+        end = Vec2{std::max(v0.x, v1.x), std::max(v0.y, v1.y)};
+    }
+};
+
 namespace VectorMath{
     //根据重心坐标进行颜色插值
     inline Color InterpColor(const std::vector<glm::vec3>& colors, const std::vector<float>& weights)
@@ -83,6 +95,9 @@ public:
     int width() const;
     int height() const;
     const std::vector<Fragment>& fragments() const { return fragments_; }
+    bool wireframeOverlayEnabled() const { return wireframeOverlayEnabled_; }
+    void setWireframeOverlayEnabled(bool enabled) { wireframeOverlayEnabled_ = enabled; }
+    void toggleWireframeOverlay() { wireframeOverlayEnabled_ = !wireframeOverlayEnabled_; }
 
     void Clear();
     void Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors);
@@ -90,6 +105,7 @@ public:
 private:
     int width_;
     int height_;
+    bool wireframeOverlayEnabled_ = true;
 
     std::vector<float> zBuffer_; // 深度缓冲
     std::vector<Fragment> fragments_; // 光栅化阶段生成的片段列表
