@@ -89,9 +89,14 @@ namespace {
 
 class Rasterizer {
 public:
-    Rasterizer(int width, int height): width_(width), height_(height) 
+    Rasterizer(int width, int height): width_(width), height_(height)
     {
-        zBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), std::numeric_limits<float>::infinity());
+        const std::size_t pixelCount = static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
+        zBuffer_.resize(pixelCount, std::numeric_limits<float>::infinity());
+        sampleZBuffer_.resize(pixelCount * kMsaaSampleCount, std::numeric_limits<float>::infinity());
+        sampleColorBuffer_.resize(pixelCount * kMsaaSampleCount, glm::vec3(0.0f));
+        sampleNormalBuffer_.resize(pixelCount * kMsaaSampleCount, glm::vec3(0.0f, 0.0f, 1.0f));
+        fragmentLut_.resize(pixelCount, -1);
     }
 
     int width() const;
@@ -110,10 +115,16 @@ public:
         const Texture2D& texture);
 
 private:
+    static constexpr int kMsaaSampleCount = 4;
+
     int width_;
     int height_;
     bool wireframeOverlayEnabled_ = false;
 
     std::vector<float> zBuffer_; // 深度缓冲
+    std::vector<float> sampleZBuffer_; // 每像素每采样点深度缓冲
+    std::vector<glm::vec3> sampleColorBuffer_; // 每像素每采样点颜色
+    std::vector<glm::vec3> sampleNormalBuffer_; // 每像素每采样点法线
+    std::vector<int> fragmentLut_; // 像素索引到 fragments_ 下标映射
     std::vector<Fragment> fragments_; // 光栅化阶段生成的片段列表
 };

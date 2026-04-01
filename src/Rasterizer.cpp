@@ -2,6 +2,64 @@
 #include "Texture.h"
 
 namespace {
+constexpr int kMsaaSamples = 4;
+constexpr std::array<Vec2, kMsaaSamples> kMsaaOffsets = {
+    Vec2{0.25f, 0.25f},
+    Vec2{0.75f, 0.25f},
+    Vec2{0.25f, 0.75f},
+    Vec2{0.75f, 0.75f}
+};
+
+size_t SampleBufferIndex(size_t pixelIndex, int sampleIndex)
+{
+    return pixelIndex * static_cast<size_t>(kMsaaSamples) + static_cast<size_t>(sampleIndex);
+}
+
+Color ToColor(const glm::vec3& color)
+{
+    const glm::vec3 clamped = glm::clamp(color, glm::vec3(0.0f), glm::vec3(1.0f));
+    return Color{
+        static_cast<std::uint8_t>(std::clamp(static_cast<int>(clamped.r * 255.0f), 0, 255)),
+        static_cast<std::uint8_t>(std::clamp(static_cast<int>(clamped.g * 255.0f), 0, 255)),
+        static_cast<std::uint8_t>(std::clamp(static_cast<int>(clamped.b * 255.0f), 0, 255)),
+        255
+    };
+}
+
+float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuffer)
+{
+    float minDepth = std::numeric_limits<float>::infinity();
+    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+        minDepth = std::min(minDepth, sampleZBuffer[SampleBufferIndex(pixelIndex, sampleIndex)]);
+    }
+    return minDepth;
+}
+
+glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sampleColorBuffer)
+{
+    glm::vec3 accumulated(0.0f);
+    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+        accumulated += sampleColorBuffer[SampleBufferIndex(pixelIndex, sampleIndex)];
+    }
+    return accumulated * (1.0f / static_cast<float>(kMsaaSamples));
+}
+
+glm::vec3 ResolvePixelNormal(
+    size_t pixelIndex,
+    float resolvedDepth,
+    const std::vector<float>& sampleZBuffer,
+    const std::vector<glm::vec3>& sampleNormalBuffer)
+{
+    constexpr float kDepthEpsilon = 1e-6f;
+    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+        const size_t index = SampleBufferIndex(pixelIndex, sampleIndex);
+        if (std::abs(sampleZBuffer[index] - resolvedDepth) <= kDepthEpsilon) {
+            return sampleNormalBuffer[index];
+        }
+    }
+    return glm::vec3(0.0f, 0.0f, 1.0f);
+}
+
 void RasterizeLine(
     const glm::vec3& v0,
     const glm::vec3& v1,
@@ -61,6 +119,143 @@ void RasterizeLine(
     }
 }
 
+template <typename ShadePixelFunc>
+void RasterizeTriangleMSAA(
+    const std::array<glm::vec3, 3>& vertexs,
+    int width,
+    int height,
+    std::vector<float>& zBuffer,
+    std::vector<float>& sampleZBuffer,
+    std::vector<glm::vec3>& sampleColorBuffer,
+    std::vector<glm::vec3>& sampleNormalBuffer,
+    std::vector<int>& fragmentLut,
+    std::vector<Fragment>& fragments,
+    ShadePixelFunc&& shadePixel)
+{
+    int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
+    int maxX = static_cast<int>(std::ceil(std::max({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
+    int minY = static_cast<int>(std::floor(std::min({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
+    int maxY = static_cast<int>(std::ceil(std::max({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
+
+    minX = std::max(minX, 0);
+    minY = std::max(minY, 0);
+    maxX = std::min(maxX, width - 1);
+    maxY = std::min(maxY, height - 1);
+
+    if (minX > maxX || minY > maxY) {
+        return;
+    }
+
+    const Vec2 v0 = {vertexs[0].x, vertexs[0].y};
+    const Vec2 v1 = {vertexs[1].x, vertexs[1].y};
+    const Vec2 v2 = {vertexs[2].x, vertexs[2].y};
+
+    const float area = VectorMath::edgeFunction(v0, v1, v2);
+    if (std::abs(area) <= 1e-6f) {
+        return;
+    }
+
+    const bool isAreaPositive = area > 0.0f;
+    const float invArea = 1.0f / area;
+    const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
+
+    const float z0 = vertexs[0].z;
+    const float z1 = vertexs[1].z;
+    const float z2 = vertexs[2].z;
+
+    for (int j = minY; j <= maxY; ++j) {
+        for (int i = minX; i <= maxX; ++i) {
+            const size_t pixelIndex = BufferIndex(i, j, width);
+            std::array<bool, kMsaaSamples> samplePassed = {false, false, false, false};
+            int passedSampleCount = 0;
+            float centroidX = 0.0f;
+            float centroidY = 0.0f;
+
+            for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+                const Vec2 samplePoint = {
+                    static_cast<float>(i) + kMsaaOffsets[sampleIndex].x,
+                    static_cast<float>(j) + kMsaaOffsets[sampleIndex].y
+                };
+
+                float w0 = VectorMath::edgeFunction(v1, v2, samplePoint);
+                float w1 = VectorMath::edgeFunction(v2, v0, samplePoint);
+                float w2 = VectorMath::edgeFunction(v0, v1, samplePoint);
+                const bool inside = isAreaPositive
+                    ? (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
+                    : (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
+
+                if (!inside) {
+                    continue;
+                }
+
+                w0 *= invArea;
+                w1 *= invArea;
+                w2 *= invArea;
+
+                const float depth = z0 * w0 + z1 * w1 + z2 * w2;
+                const size_t sampleBufferIndex = SampleBufferIndex(pixelIndex, sampleIndex);
+                if (depth >= sampleZBuffer[sampleBufferIndex]) {
+                    continue;
+                }
+
+                sampleZBuffer[sampleBufferIndex] = depth;
+                sampleNormalBuffer[sampleBufferIndex] = triangleNormal;
+                samplePassed[sampleIndex] = true;
+                ++passedSampleCount;
+                centroidX += samplePoint.x;
+                centroidY += samplePoint.y;
+            }
+
+            if (passedSampleCount == 0) {
+                continue;
+            }
+
+            Vec2 shadePoint{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f};
+            if (passedSampleCount != kMsaaSamples) {
+                shadePoint.x = centroidX / static_cast<float>(passedSampleCount);
+                shadePoint.y = centroidY / static_cast<float>(passedSampleCount);
+            }
+
+            float shadeW0 = VectorMath::edgeFunction(v1, v2, shadePoint) * invArea;
+            float shadeW1 = VectorMath::edgeFunction(v2, v0, shadePoint) * invArea;
+            float shadeW2 = VectorMath::edgeFunction(v0, v1, shadePoint) * invArea;
+            const glm::vec3 pixelShadedColor = glm::clamp(
+                shadePixel(shadeW0, shadeW1, shadeW2),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f));
+
+            for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+                if (!samplePassed[sampleIndex]) {
+                    continue;
+                }
+                const size_t sampleBufferIndex = SampleBufferIndex(pixelIndex, sampleIndex);
+                sampleColorBuffer[sampleBufferIndex] = pixelShadedColor;
+            }
+
+            const float resolvedDepth = ResolvePixelDepth(pixelIndex, sampleZBuffer);
+            if (!std::isfinite(resolvedDepth)) {
+                continue;
+            }
+
+            zBuffer[pixelIndex] = resolvedDepth;
+
+            Fragment frag;
+            frag.screenPos = Vec2{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f};
+            frag.bufferIndex = pixelIndex;
+            frag.depth = resolvedDepth;
+            frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer));
+            frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer, sampleNormalBuffer);
+
+            const int fragmentIndex = fragmentLut[pixelIndex];
+            if (fragmentIndex >= 0) {
+                fragments[static_cast<std::size_t>(fragmentIndex)] = frag;
+            } else {
+                fragmentLut[pixelIndex] = static_cast<int>(fragments.size());
+                fragments.push_back(frag);
+            }
+        }
+    }
+}
 }
 
 int Rasterizer::width() const
@@ -76,88 +271,36 @@ int Rasterizer::height() const
 void Rasterizer::Clear()
 {
     std::fill(zBuffer_.begin(), zBuffer_.end(), std::numeric_limits<float>::infinity());
+    std::fill(sampleZBuffer_.begin(), sampleZBuffer_.end(), std::numeric_limits<float>::infinity());
+    std::fill(sampleColorBuffer_.begin(), sampleColorBuffer_.end(), glm::vec3(0.0f));
+    std::fill(sampleNormalBuffer_.begin(), sampleNormalBuffer_.end(), glm::vec3(0.0f, 0.0f, 1.0f));
+    std::fill(fragmentLut_.begin(), fragmentLut_.end(), -1);
     fragments_.clear();
 }
 
 void Rasterizer::Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors)
 {
-    int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
-    int maxX = static_cast<int>(std::ceil(std::max({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
-    int minY = static_cast<int>(std::floor(std::min({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
-    int maxY = static_cast<int>(std::ceil(std::max({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
-
-    minX = std::max(minX, 0);
-    minY = std::max(minY, 0);
-    maxX = std::min(maxX, width_ - 1);
-    maxY = std::min(maxY, height_ - 1);
-
-    if (minX > maxX || minY > maxY) {
-        return;
-    }
-
-    Vec2 v0 = {vertexs[0].x, vertexs[0].y};
-    Vec2 v1 = {vertexs[1].x, vertexs[1].y};
-    Vec2 v2 = {vertexs[2].x, vertexs[2].y};
-
-    float area = VectorMath::edgeFunction(v0, v1, v2);
-    if (std::abs(area) <= 1e-6f) {
-        return; // 三角形退化，跳过
-    }
-
-    const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
-
-    const bool isAreaPositive = area > 0.0f;
-    const float invArea = 1.0f / area;
-
-    const float z0 = vertexs[0].z;
-    const float z1 = vertexs[1].z;
-    const float z2 = vertexs[2].z;
-
-    
     if (wireframeOverlayEnabled_) {
+        const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
         RasterizeLine(vertexs[0], vertexs[1], triangleNormal, width_, height_, zBuffer_, fragments_);
         RasterizeLine(vertexs[1], vertexs[2], triangleNormal, width_, height_, zBuffer_, fragments_);
         RasterizeLine(vertexs[2], vertexs[0], triangleNormal, width_, height_, zBuffer_, fragments_);
-        return; // 线框模式下只绘制边线
+        return;
     }
 
-    for(int j=minY;j<=maxY;j++)
-    {
-        for(int i=minX;i<=maxX;i++)
-        {
-            // 判断点 (i, j) 是否在三角形内，如果在三角形内，计算该点的颜色和深度，并更新 colorBuffer_ 和 zBuffer_。
-            Vec2 p{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f}; // 采样点在像素中心
-            float w0 = VectorMath::edgeFunction(v1, v2, p);
-            float w1 = VectorMath::edgeFunction(v2, v0, p);
-            float w2 = VectorMath::edgeFunction(v0, v1, p);
-            const bool inside = isAreaPositive
-                ? (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
-                : (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
-            if(inside){
-                w0 *= invArea;
-                w1 *= invArea;
-                w2 *= invArea;
-                float depth = z0 * w0 + z1 * w1 + z2 * w2;
-                size_t bufferIndex = BufferIndex(i, j, width_);
-                if (depth < zBuffer_[bufferIndex]) { // 深度测试
-                    zBuffer_[bufferIndex] = depth;
-                    Fragment frag;
-                    frag.screenPos = p;
-                    frag.depth = depth;
-                    frag.normal = triangleNormal;
-                    const glm::vec3 color = colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
-                    frag.color = Color{
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.r * 255.0f), 0, 255)),
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.g * 255.0f), 0, 255)),
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(color.b * 255.0f), 0, 255)),
-                        255
-                    };
-                    frag.bufferIndex = bufferIndex;
-                    fragments_.push_back(frag);
-                }
-            }
-        }
-    }
+    RasterizeTriangleMSAA(
+        vertexs,
+        width_,
+        height_,
+        zBuffer_,
+        sampleZBuffer_,
+        sampleColorBuffer_,
+        sampleNormalBuffer_,
+        fragmentLut_,
+        fragments_,
+        [&](float w0, float w1, float w2) {
+            return colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
+        });
 }
 
 void Rasterizer::Rasterize_Triangle(
@@ -166,39 +309,8 @@ void Rasterizer::Rasterize_Triangle(
     const std::array<glm::vec2, 3>& texCoords,
     const Texture2D& texture)
 {
-    int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
-    int maxX = static_cast<int>(std::ceil(std::max({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
-    int minY = static_cast<int>(std::floor(std::min({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
-    int maxY = static_cast<int>(std::ceil(std::max({vertexs[0].y, vertexs[1].y, vertexs[2].y})));
-
-    minX = std::max(minX, 0);
-    minY = std::max(minY, 0);
-    maxX = std::min(maxX, width_ - 1);
-    maxY = std::min(maxY, height_ - 1);
-
-    if (minX > maxX || minY > maxY) {
-        return;
-    }
-
-    Vec2 v0 = {vertexs[0].x, vertexs[0].y};
-    Vec2 v1 = {vertexs[1].x, vertexs[1].y};
-    Vec2 v2 = {vertexs[2].x, vertexs[2].y};
-
-    float area = VectorMath::edgeFunction(v0, v1, v2);
-    if (std::abs(area) <= 1e-6f) {
-        return;
-    }
-
-    const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
-
-    const bool isAreaPositive = area > 0.0f;
-    const float invArea = 1.0f / area;
-
-    const float z0 = vertexs[0].z;
-    const float z1 = vertexs[1].z;
-    const float z2 = vertexs[2].z;
-
     if (wireframeOverlayEnabled_) {
+        const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
         RasterizeLine(vertexs[0], vertexs[1], triangleNormal, width_, height_, zBuffer_, fragments_);
         RasterizeLine(vertexs[1], vertexs[2], triangleNormal, width_, height_, zBuffer_, fragments_);
         RasterizeLine(vertexs[2], vertexs[0], triangleNormal, width_, height_, zBuffer_, fragments_);
@@ -216,52 +328,25 @@ void Rasterizer::Rasterize_Triangle(
         }
     }
 
-    for (int j = minY; j <= maxY; ++j) {
-        for (int i = minX; i <= maxX; ++i) {
-            Vec2 p{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f};
-            float w0 = VectorMath::edgeFunction(v1, v2, p);
-            float w1 = VectorMath::edgeFunction(v2, v0, p);
-            float w2 = VectorMath::edgeFunction(v0, v1, p);
-            const bool inside = isAreaPositive
-                ? (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
-                : (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
-            if (inside) {
-                w0 *= invArea;
-                w1 *= invArea;
-                w2 *= invArea;
+    RasterizeTriangleMSAA(
+        vertexs,
+        width_,
+        height_,
+        zBuffer_,
+        sampleZBuffer_,
+        sampleColorBuffer_,
+        sampleNormalBuffer_,
+        fragmentLut_,
+        fragments_,
+        [&](float w0, float w1, float w2) {
+            float u = seamSafeTexCoords[0].x * w0 + seamSafeTexCoords[1].x * w1 + seamSafeTexCoords[2].x * w2;
+            u -= std::floor(u);
+            const float v = std::clamp(
+                seamSafeTexCoords[0].y * w0 + seamSafeTexCoords[1].y * w1 + seamSafeTexCoords[2].y * w2,
+                0.0f,
+                1.0f);
 
-                const float depth = z0 * w0 + z1 * w1 + z2 * w2;
-                const size_t bufferIndex = BufferIndex(i, j, width_);
-                if (depth < zBuffer_[bufferIndex]) {
-                    zBuffer_[bufferIndex] = depth;
-
-                    float u = seamSafeTexCoords[0].x * w0 + seamSafeTexCoords[1].x * w1 + seamSafeTexCoords[2].x * w2;
-                    u -= std::floor(u);
-                    const float v = glm::clamp(
-                        seamSafeTexCoords[0].y * w0 + seamSafeTexCoords[1].y * w1 + seamSafeTexCoords[2].y * w2,
-                        0.0f,
-                        1.0f);
-
-                    const glm::vec3 vertexColor = glm::clamp(
-                        colors[0] * w0 + colors[1] * w1 + colors[2] * w2,
-                        glm::vec3(0.0f),
-                        glm::vec3(1.0f));
-                    const glm::vec3 texturedColor = texture.sample(u, v) * vertexColor;
-
-                    Fragment frag;
-                    frag.screenPos = p;
-                    frag.depth = depth;
-                    frag.normal = triangleNormal;
-                    frag.color = Color{
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(texturedColor.r * 255.0f), 0, 255)),
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(texturedColor.g * 255.0f), 0, 255)),
-                        static_cast<std::uint8_t>(std::clamp(static_cast<int>(texturedColor.b * 255.0f), 0, 255)),
-                        255
-                    };
-                    frag.bufferIndex = bufferIndex;
-                    fragments_.push_back(frag);
-                }
-            }
-        }
-    }
+            const glm::vec3 vertexColor = colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
+            return texture.sample(u, v) * vertexColor;
+        });
 }
