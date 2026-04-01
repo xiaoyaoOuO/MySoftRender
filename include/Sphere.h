@@ -28,9 +28,11 @@ public:
     const std::vector<glm::vec4>& vertices() const { return vertices_; }
     const std::vector<glm::uvec3>& indices() const { return indices_; }
     const std::vector<glm::vec3>& vertexColors() const { return vertexColors_; }
+    const std::vector<glm::vec2>& vertexUVs() const { return vertexUVs_; }
 
 private:
     void rebuildMesh();
+    glm::vec2 computeSphericalUV(const glm::vec3& point) const;
     std::uint32_t addMidpoint(
         std::uint32_t a,
         std::uint32_t b,
@@ -43,4 +45,5 @@ private:
     std::vector<glm::vec4> vertices_;
     std::vector<glm::uvec3> indices_;
     std::vector<glm::vec3> vertexColors_;
+    std::vector<glm::vec2> vertexUVs_;
 };

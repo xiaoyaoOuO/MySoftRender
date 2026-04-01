@@ -9,11 +9,43 @@
 #include <iostream>
 #include <memory>
 #include <cstdio>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 namespace Window{
     constexpr int kWindowWidth = 960;
     constexpr int kWindowHeight = 540;
     constexpr bool kEnablePresentVSync = false;
+}
+
+namespace {
+std::string ResolveSphereTexturePath(const char* argv0)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path relativeAssetPath = fs::path("assets") / "earth.jpg";
+    std::vector<fs::path> candidates;
+    candidates.emplace_back(relativeAssetPath);
+    candidates.emplace_back(fs::path("..") / relativeAssetPath);
+    candidates.emplace_back(fs::path("../..") / relativeAssetPath);
+
+    if (argv0 != nullptr && argv0[0] != '\0') {
+        const fs::path exePath = fs::absolute(fs::path(argv0));
+        const fs::path exeDir = exePath.parent_path();
+        candidates.emplace_back(exeDir / relativeAssetPath);
+        candidates.emplace_back(exeDir.parent_path() / relativeAssetPath);
+    }
+
+    for (const fs::path& candidate : candidates) {
+        std::error_code ec;
+        if (fs::exists(candidate, ec) && !ec) {
+            return candidate.string();
+        }
+    }
+
+    return relativeAssetPath.string();
+}
 }
 
 void CreateScene(Scene& scene)
@@ -26,7 +58,7 @@ void CreateScene(Scene& scene)
     triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
     scene.objects.emplace_back(std::move(triangle));
 
-    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.8f, 0.9f, 1.0f));
+    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
     sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
     scene.objects.emplace_back(std::move(sphere));
 
@@ -37,14 +69,17 @@ void CreateScene(Scene& scene)
 
 int main(int argc, char* argv[])
 {
-    (void)argc;
-    (void)argv;
-
     Scene scene;
     CreateScene(scene);
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
-    std::cout << "Wireframe overlay: ON (press F1 to toggle)" << '\n';
+    const std::string sphereTexturePath = ResolveSphereTexturePath(argc > 0 ? argv[0] : nullptr);
+    if (!renderer.loadSphereTexture(sphereTexturePath)) {
+        std::cout << "Sphere texture: using generated checkerboard (texture not found)" << '\n';
+    } else {
+        std::cout << "Sphere texture loaded from: " << sphereTexturePath << '\n';
+    }
+    std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';

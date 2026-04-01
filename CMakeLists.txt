@@ -77,6 +77,7 @@ add_executable(mySoftRender
     src/main.cpp
     src/Object.cpp
     src/Sphere.cpp
+    src/Texture.cpp
     src/Rasterizer.cpp
     src/software_renderer.cpp
 )

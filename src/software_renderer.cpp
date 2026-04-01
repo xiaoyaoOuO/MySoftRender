@@ -14,6 +14,7 @@ SoftwareRenderer::SoftwareRenderer(int width, int height)
     : width_(width), height_(height), rasterizer_(width, height)
 {
     colorBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
+    useDefaultSphereTexture();
 }
 
 void SoftwareRenderer::clear(const Color& color)
@@ -53,6 +54,21 @@ void SoftwareRenderer::toggleWireframeOverlay()
     rasterizer_.toggleWireframeOverlay();
 }
 
+bool SoftwareRenderer::loadSphereTexture(const std::string& texturePath)
+{
+    return sphereTexture_.loadFromFile(texturePath);
+}
+
+void SoftwareRenderer::useDefaultSphereTexture()
+{
+    sphereTexture_.createCheckerboard(
+        1024,
+        512,
+        32,
+        glm::vec3(0.95f, 0.95f, 0.95f),
+        glm::vec3(0.12f, 0.38f, 0.78f));
+}
+
 std::uint32_t SoftwareRenderer::packColor(const Color& color)
 {
     // 将颜色通道打包为 0xAARRGGBB，匹配 SDL ARGB8888 纹理格式。
@@ -87,26 +103,49 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
     const glm::mat4 viewProjection = scene.camera->projectionMatrix() * scene.camera->viewMatrix();
 
-    auto rasterizeLocalTriangle = [&](const glm::mat4& mvp,
-                                     const std::array<glm::vec4, 3>& localVertices,
-                                     const std::array<glm::vec3, 3>& colors) {
+    auto projectLocalTriangleToScreen = [&](const glm::mat4& mvp,
+                                            const std::array<glm::vec4, 3>& localVertices,
+                                            std::array<glm::vec3, 3>& screenVertices) {
         glm::vec4 ndcVertices[3];
         for (int i = 0; i < 3; ++i) {
             const glm::vec4 clipVertex = mvp * localVertices[i];
             if (std::abs(clipVertex.w) <= 1e-6f) {
-                return;
+                return false;
             }
             ndcVertices[i] = clipVertex / clipVertex.w;
         }
 
-        std::array<glm::vec3, 3> screenVertices;
         for (int i = 0; i < 3; ++i) {
             screenVertices[i].x = (ndcVertices[i].x + 1.0f) * 0.5f * width_;
             screenVertices[i].y = (1.0f - (ndcVertices[i].y + 1.0f) * 0.5f) * height_;
             screenVertices[i].z = (ndcVertices[i].z + 1.0f) * 0.5f;
         }
 
+        return true;
+    };
+
+    auto rasterizeLocalTriangle = [&](const glm::mat4& mvp,
+                                      const std::array<glm::vec4, 3>& localVertices,
+                                      const std::array<glm::vec3, 3>& colors) {
+        std::array<glm::vec3, 3> screenVertices;
+        if (!projectLocalTriangleToScreen(mvp, localVertices, screenVertices)) {
+            return;
+        }
+
         rasterizer_.Rasterize_Triangle(screenVertices, colors);
+    };
+
+    auto rasterizeLocalTexturedTriangle = [&](const glm::mat4& mvp,
+                                              const std::array<glm::vec4, 3>& localVertices,
+                                              const std::array<glm::vec3, 3>& colors,
+                                              const std::array<glm::vec2, 3>& texCoords,
+                                              const Texture2D& texture) {
+        std::array<glm::vec3, 3> screenVertices;
+        if (!projectLocalTriangleToScreen(mvp, localVertices, screenVertices)) {
+            return;
+        }
+
+        rasterizer_.Rasterize_Triangle(screenVertices, colors, texCoords, texture);
     };
 
     for(const auto& obj : scene.objects)
@@ -132,6 +171,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             const auto& sphereVertices = sphere->vertices();
             const auto& sphereIndices = sphere->indices();
             const auto& sphereColors = sphere->vertexColors();
+            const auto& sphereUVs = sphere->vertexUVs();
 
             for (const glm::uvec3& face : sphereIndices) {
                 const std::array<glm::vec4, 3> localVertices = {
@@ -144,7 +184,12 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                     sphereColors[face.y],
                     sphereColors[face.z]
                 };
-                rasterizeLocalTriangle(mvp, localVertices, colors);
+                const std::array<glm::vec2, 3> texCoords = {
+                    sphereUVs[face.x],
+                    sphereUVs[face.y],
+                    sphereUVs[face.z]
+                };
+                rasterizeLocalTexturedTriangle(mvp, localVertices, colors, texCoords, sphereTexture_);
             }
         }
 

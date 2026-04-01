@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <glm/vec3.hpp>
 #include <vector>
 #include "Scene.h"
 #include "Rasterizer.h"
+#include "Texture.h"
 
 
 /**
@@ -22,12 +24,15 @@ public:
     bool wireframeOverlayEnabled() const;
     void setWireframeOverlayEnabled(bool enabled);
     void toggleWireframeOverlay();
+    bool loadSphereTexture(const std::string& texturePath);
+    void useDefaultSphereTexture();
     void DrawScene(const Scene& scene);
 
 private:
     int width_;
     int height_;
     std::vector<std::uint32_t> colorBuffer_;
+    Texture2D sphereTexture_;
 
     Rasterizer rasterizer_;
     std::function<void(std::vector<std::uint32_t>&, const Fragment&)> fragmentShader_;

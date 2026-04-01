@@ -8,6 +8,8 @@
 #include <limits>
 #include <unordered_map>
 
+class Texture2D;
+
 struct Vec2 {
     float x;
     float y;
@@ -101,11 +103,16 @@ public:
 
     void Clear();
     void Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors);
+    void Rasterize_Triangle(
+        const std::array<glm::vec3, 3>& vertexs,
+        const std::array<glm::vec3, 3>& colors,
+        const std::array<glm::vec2, 3>& texCoords,
+        const Texture2D& texture);
 
 private:
     int width_;
     int height_;
-    bool wireframeOverlayEnabled_ = true;
+    bool wireframeOverlayEnabled_ = false;
 
     std::vector<float> zBuffer_; // 深度缓冲
     std::vector<Fragment> fragments_; // 光栅化阶段生成的片段列表

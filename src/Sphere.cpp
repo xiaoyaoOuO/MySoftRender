@@ -11,6 +11,7 @@ std::uint64_t EdgeKey(std::uint32_t a, std::uint32_t b)
     }
     return (static_cast<std::uint64_t>(a) << 32U) | static_cast<std::uint64_t>(b);
 }
+constexpr float KPi = 3.14159265358979323846f;
 }
 
 Sphere::Sphere(
@@ -125,4 +126,22 @@ void Sphere::rebuildMesh()
     }
 
     vertexColors_.assign(vertices_.size(), color_);
+
+    vertexUVs_.clear();
+    vertexUVs_.reserve(vertices_.size());
+    for (const glm::vec4& v : vertices_) {
+        vertexUVs_.push_back(computeSphericalUV(glm::vec3(v)));
+    }
+}
+
+glm::vec2 Sphere::computeSphericalUV(const glm::vec3 &point) const
+{
+    const float len = glm::dot(point, point);
+    if (len <= 1e-12f) {
+        return glm::vec2(0.5f, 0.5f);
+    }
+    glm::vec3 n = glm::normalize(point);
+    const float u = std::clamp(std::atan2(n.z, n.x) / (2.0f * KPi) + 0.5f, 0.0f, 1.0f);
+    const float v = std::clamp(std::acos(n.y) / KPi, 0.0f, 1.0f);
+    return glm::vec2(u, v);
 }
