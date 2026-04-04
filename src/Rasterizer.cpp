@@ -2,23 +2,57 @@
 #include "Texture.h"
 
 namespace {
-// 作用：定义当前光栅器使用的固定 4x MSAA 采样数量。
-// 用法：所有 sample 缓冲都按 pixelIndex * kMsaaSamples 展开存储，若调整采样数需同步修改偏移与缓冲初始化逻辑。
-constexpr int kMsaaSamples = 4;
-// 作用：定义每个像素内部 4 个子采样点的偏移位置。
-// 用法：在遍历像素时，将像素左上角整数坐标加上该偏移得到 samplePoint，用于覆盖测试与重心插值。
-constexpr std::array<Vec2, kMsaaSamples> kMsaaOffsets = {
+// 作用：定义采样缓冲的最大展开采样数（用于固定步长索引）。
+// 用法：当前支持 1/2/4 三档 MSAA，底层缓冲按最大 4 采样预分配。
+constexpr int kMaxMsaaSamples = 4;
+
+// 作用：定义 1x/2x/4x 对应的子采样点偏移。
+// 用法：根据当前 MSAA 档位选择对应偏移数组参与覆盖测试。
+constexpr std::array<Vec2, 1> kMsaaOffsets1 = {
+    Vec2{0.5f, 0.5f}
+};
+constexpr std::array<Vec2, 2> kMsaaOffsets2 = {
+    Vec2{0.25f, 0.5f},
+    Vec2{0.75f, 0.5f}
+};
+constexpr std::array<Vec2, kMaxMsaaSamples> kMsaaOffsets4 = {
     Vec2{0.25f, 0.25f},
     Vec2{0.75f, 0.25f},
     Vec2{0.25f, 0.75f},
     Vec2{0.75f, 0.75f}
 };
 
+// 作用：将传入采样数规范到 1/2/4 三档。
+// 用法：用户传入任意整数时，统一映射到最近合法档位，避免非法参数破坏光栅流程。
+int NormalizeMsaaSampleCount(int sampleCount)
+{
+    if (sampleCount <= 1) {
+        return 1;
+    }
+    if (sampleCount <= 2) {
+        return 2;
+    }
+    return 4;
+}
+
+// 作用：根据采样档位返回对应子采样偏移数组首地址。
+// 用法：配合 activeSampleCount 一起传入光栅主循环。
+const Vec2* ResolveMsaaOffsets(int activeSampleCount)
+{
+    if (activeSampleCount == 1) {
+        return kMsaaOffsets1.data();
+    }
+    if (activeSampleCount == 2) {
+        return kMsaaOffsets2.data();
+    }
+    return kMsaaOffsets4.data();
+}
+
 // 作用：把像素索引与子采样索引映射到 sample 缓冲的一维下标。
-// 用法：访问 sampleZBuffer、sampleColorBuffer、sampleNormalBuffer 时统一调用，sampleIndex 范围为 [0, kMsaaSamples)。
+// 用法：访问 sampleZBuffer、sampleColorBuffer、sampleNormalBuffer 时统一调用，sampleIndex 范围为 [0, kMaxMsaaSamples)。
 size_t SampleBufferIndex(size_t pixelIndex, int sampleIndex)
 {
-    return pixelIndex * static_cast<size_t>(kMsaaSamples) + static_cast<size_t>(sampleIndex);
+    return pixelIndex * static_cast<size_t>(kMaxMsaaSamples) + static_cast<size_t>(sampleIndex);
 }
 
 Color ToColor(const glm::vec3& color)
@@ -34,10 +68,10 @@ Color ToColor(const glm::vec3& color)
 
 // 作用：将一个像素对应的 4 个 sample 深度解析为最终像素深度。
 // 用法：在像素完成 sample 级深度写入后调用，返回最靠前（最小）的深度，用于更新像素级 zBuffer。
-float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuffer)
+float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuffer, int activeSampleCount)
 {
     float minDepth = std::numeric_limits<float>::infinity();
-    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+    for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
         minDepth = std::min(minDepth, sampleZBuffer[SampleBufferIndex(pixelIndex, sampleIndex)]);
     }
     return minDepth;
@@ -45,13 +79,13 @@ float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuff
 
 // 作用：将一个像素的 4 个 sample 颜色做平均，得到最终像素颜色。
 // 用法：在通过深度测试的 sample 写入颜色后调用，结果再通过 ToColor 转为 8-bit RGBA 输出。
-glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sampleColorBuffer)
+glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sampleColorBuffer, int activeSampleCount)
 {
     glm::vec3 accumulated(0.0f);
-    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+    for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
         accumulated += sampleColorBuffer[SampleBufferIndex(pixelIndex, sampleIndex)];
     }
-    return accumulated * (1.0f / static_cast<float>(kMsaaSamples));
+    return accumulated * (1.0f / static_cast<float>(activeSampleCount));
 }
 
 // 作用：从与解析深度匹配的 sample 中恢复像素法线，供后续调试显示或可视化使用。
@@ -60,10 +94,11 @@ glm::vec3 ResolvePixelNormal(
     size_t pixelIndex,
     float resolvedDepth,
     const std::vector<float>& sampleZBuffer,
-    const std::vector<glm::vec3>& sampleNormalBuffer)
+    const std::vector<glm::vec3>& sampleNormalBuffer,
+    int activeSampleCount)
 {
     static constexpr float kDepthEpsilon = 1e-6f;
-    for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+    for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
         const size_t index = SampleBufferIndex(pixelIndex, sampleIndex);
         if (std::abs(sampleZBuffer[index] - resolvedDepth) <= kDepthEpsilon) {
             return sampleNormalBuffer[index];
@@ -144,6 +179,8 @@ void RasterizeTriangleMSAA(
     std::vector<glm::vec3>& sampleNormalBuffer,
     std::vector<int>& fragmentLut,
     std::vector<Fragment>& fragments,
+    int activeSampleCount,
+    const Vec2* sampleOffsets,
     ShadePixelFunc&& shadePixel)
 {
     int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
@@ -180,15 +217,15 @@ void RasterizeTriangleMSAA(
     for (int j = minY; j <= maxY; ++j) {
         for (int i = minX; i <= maxX; ++i) {
             const size_t pixelIndex = BufferIndex(i, j, width);
-            std::array<bool, kMsaaSamples> samplePassed = {false, false, false, false};
+            std::array<bool, kMaxMsaaSamples> samplePassed = {false, false, false, false};
             int passedSampleCount = 0;
             float centroidX = 0.0f;
             float centroidY = 0.0f;
 
-            for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+            for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
                 const Vec2 samplePoint = {
-                    static_cast<float>(i) + kMsaaOffsets[sampleIndex].x,
-                    static_cast<float>(j) + kMsaaOffsets[sampleIndex].y
+                    static_cast<float>(i) + sampleOffsets[sampleIndex].x,
+                    static_cast<float>(j) + sampleOffsets[sampleIndex].y
                 };
 
                 float w0 = VectorMath::edgeFunction(v1, v2, samplePoint);
@@ -225,7 +262,7 @@ void RasterizeTriangleMSAA(
             }
 
             Vec2 shadePoint{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f};
-            if (passedSampleCount != kMsaaSamples) {
+            if (passedSampleCount != activeSampleCount) {
                 shadePoint.x = centroidX / static_cast<float>(passedSampleCount);
                 shadePoint.y = centroidY / static_cast<float>(passedSampleCount);
             }
@@ -238,7 +275,7 @@ void RasterizeTriangleMSAA(
                 glm::vec3(0.0f),
                 glm::vec3(1.0f));
 
-            for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
+            for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
                 if (!samplePassed[sampleIndex]) {
                     continue;
                 }
@@ -246,7 +283,7 @@ void RasterizeTriangleMSAA(
                 sampleColorBuffer[sampleBufferIndex] = pixelShadedColor;
             }
 
-            const float resolvedDepth = ResolvePixelDepth(pixelIndex, sampleZBuffer);
+            const float resolvedDepth = ResolvePixelDepth(pixelIndex, sampleZBuffer, activeSampleCount);
             if (!std::isfinite(resolvedDepth)) {
                 continue;
             }
@@ -257,8 +294,8 @@ void RasterizeTriangleMSAA(
             frag.screenPos = Vec2{static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f};
             frag.bufferIndex = pixelIndex;
             frag.depth = resolvedDepth;
-            frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer));
-            frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer, sampleNormalBuffer);
+            frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer, activeSampleCount));
+            frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer, sampleNormalBuffer, activeSampleCount);
 
             const int fragmentIndex = fragmentLut[pixelIndex];
             if (fragmentIndex >= 0) {
@@ -282,18 +319,53 @@ int Rasterizer::height() const
     return height_;
 }
 
+void Rasterizer::setMsaaSampleCount(int sampleCount)
+{
+    msaaSampleCount_ = NormalizeMsaaSampleCount(sampleCount);
+}
+
 void Rasterizer::Clear()
 {
+    // 仅清理当前激活采样档位对应的 sample 缓冲，减少低档 MSAA 下的无效内存写入。
+    const int activeSampleCount = msaaSampleCount_;
+    const float infDepth = std::numeric_limits<float>::infinity();
+
     std::fill(zBuffer_.begin(), zBuffer_.end(), std::numeric_limits<float>::infinity());
-    std::fill(sampleZBuffer_.begin(), sampleZBuffer_.end(), std::numeric_limits<float>::infinity());
-    std::fill(sampleColorBuffer_.begin(), sampleColorBuffer_.end(), glm::vec3(0.0f));
-    std::fill(sampleNormalBuffer_.begin(), sampleNormalBuffer_.end(), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    for (size_t pixelIndex = 0; pixelIndex < zBuffer_.size(); ++pixelIndex) {
+        for (int sampleIndex = 0; sampleIndex < activeSampleCount; ++sampleIndex) {
+            const size_t sampleBufferIndex = SampleBufferIndex(pixelIndex, sampleIndex);
+            sampleZBuffer_[sampleBufferIndex] = infDepth;
+            sampleColorBuffer_[sampleBufferIndex] = glm::vec3(0.0f);
+            sampleNormalBuffer_[sampleBufferIndex] = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+    }
+
     std::fill(fragmentLut_.begin(), fragmentLut_.end(), -1);
     fragments_.clear();
 }
 
 void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const Texture2D* texture)
 {
+    // 屏幕空间采用 y 轴向下约定时，约定顺时针为正面。
+    const Vec2 s0 = {vertices[0].position.x, vertices[0].position.y};
+    const Vec2 s1 = {vertices[1].position.x, vertices[1].position.y};
+    const Vec2 s2 = {vertices[2].position.x, vertices[2].position.y};
+    const float signedArea = VectorMath::edgeFunction(s0, s1, s2);
+
+    if (std::abs(signedArea) <= 1e-6f) {
+        return;
+    }
+
+    if (backfaceCullingEnabled_) {
+        // 说明：当前 edgeFunction 的符号定义与屏幕 Y 轴向下视口变换共同作用后，正面三角形对应 signedArea > 0。
+        // 若这里符号写反，会把正面误剔除，导致模型“外观翻面/缺面”。
+        const bool isFrontFace = signedArea > 0.0f;
+        if (!isFrontFace) {
+            return;
+        }
+    }
+
     // 如果开启了线框模式，则仅绘制三角形的边缘线段。
     if (wireframeOverlayEnabled_) {
         const glm::vec3 triangleNormal = VectorMath::getNormal(vertices[0].position, vertices[1].position, vertices[2].position);
@@ -310,7 +382,14 @@ void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const
     if (texture) {
         const float minU = std::min({vertices[0].texCoord.x, vertices[1].texCoord.x, vertices[2].texCoord.x});
         const float maxU = std::max({vertices[0].texCoord.x, vertices[1].texCoord.x, vertices[2].texCoord.x});
-        if (maxU - minU > 0.5f) {
+        const bool hasNearZero = (vertices[0].texCoord.x < 0.15f)
+            || (vertices[1].texCoord.x < 0.15f)
+            || (vertices[2].texCoord.x < 0.15f);
+        const bool hasNearOne = (vertices[0].texCoord.x > 0.85f)
+            || (vertices[1].texCoord.x > 0.85f)
+            || (vertices[2].texCoord.x > 0.85f);
+        // 仅在 UV 横跨 [0,1] 边界附近时才做接缝修正，避免误处理普通 UV 岛。
+        if ((maxU - minU > 0.5f) && hasNearZero && hasNearOne) {
             for (glm::vec2& uv : seamSafeTexCoords) {
                 if (uv.x < 0.5f) {
                     uv.x += 1.0f;
@@ -318,6 +397,9 @@ void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const
             }
         }
     }
+
+    const int activeSampleCount = msaaSampleCount_;
+    const Vec2* sampleOffsets = ResolveMsaaOffsets(activeSampleCount);
 
     // 调用底层核心 MSAA 渲染函数。
     // 在 Lambda 回调中，通过计算得到的重心坐标(w0, w1, w2)插值计算每个被覆盖像素的颜色。
@@ -331,6 +413,8 @@ void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const
         sampleNormalBuffer_,
         fragmentLut_,
         fragments_,
+        activeSampleCount,
+        sampleOffsets,
         [&](float w0, float w1, float w2) {
             // 基本颜色插值
             const glm::vec3 vertexColor = vertices[0].color * w0 + vertices[1].color * w1 + vertices[2].color * w2;

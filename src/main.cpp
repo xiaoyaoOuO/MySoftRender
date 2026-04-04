@@ -1,15 +1,18 @@
-#include <SDL2/SDL.h>
+﻿#include <SDL2/SDL.h>
 #include "Scene.h"
 #include "Camera.h"
 #include "Object.h"
 #include "Triangle.h"
 #include "Cube.h"
 #include "Sphere.h"
+#include "MeshObject.h"
 #include "software_renderer.h"
 #include "ObjLoader.h"
+#include "Texture.h"
 #include <iostream>
 #include <memory>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -21,11 +24,12 @@ namespace Window{
 }
 
 namespace {
-std::string ResolveSphereTexturePath(const char* argv0)
+// 作用：根据可执行文件位置和相对资源路径，解析出可用的资源文件路径。
+// 用法：传入 argv0 与如 assets/... 的相对路径，函数会在常见运行目录层级中自动查找。
+std::string ResolveAssetPath(const char* argv0, const std::filesystem::path& relativeAssetPath)
 {
     namespace fs = std::filesystem;
 
-    const fs::path relativeAssetPath = fs::path("assets") / "earth.jpg";
     std::vector<fs::path> candidates;
     candidates.emplace_back(relativeAssetPath);
     candidates.emplace_back(fs::path("..") / relativeAssetPath);
@@ -47,57 +51,120 @@ std::string ResolveSphereTexturePath(const char* argv0)
 
     return relativeAssetPath.string();
 }
+
+// 作用：解析球体纹理路径（earth.jpg）。
+// 用法：程序启动时调用，得到可直接传给 Texture2D::loadFromFile 的路径。
+std::string ResolveSphereTexturePath(const char* argv0)
+{
+    return ResolveAssetPath(argv0, std::filesystem::path("assets") / "earth.jpg");
 }
 
-void CreateScene(Scene& scene)
+// 作用：解析 Mary 模型纹理路径（MC003_Kozakura_Mari.png）。
+// 用法：程序启动时调用，得到 Mary 贴图文件的可用路径。
+std::string ResolveMaryTexturePath(const char* argv0)
+{
+    return ResolveAssetPath(argv0, std::filesystem::path("assets") / "mary" / "MC003_Kozakura_Mari.png");
+}
+
+// 作用：解析 Mary 模型几何文件路径（mary.obj）。
+// 用法：创建场景前调用，得到 OBJ 文件路径用于加载网格。
+std::string ResolveMaryObjPath(const char* argv0)
+{
+    return ResolveAssetPath(argv0, std::filesystem::path("assets") / "mary" / "mary.obj");
+}
+
+// 作用：按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。
+// 用法：每次按键触发时传入当前档位，返回下一个可用档位。
+int NextMsaaSampleCount(int currentSampleCount)
+{
+    if (currentSampleCount <= 1) {
+        return 2;
+    }
+    if (currentSampleCount <= 2) {
+        return 4;
+    }
+    return 1;
+}
+}
+
+// 作用：构建场景对象，并将纹理按对象维度绑定到 Mary 网格对象上。
+// 用法：调用时传入已加载好的共享纹理和 OBJ 路径，后续渲染按单网格对象统一遍历索引绘制。
+void CreateScene(
+    Scene& scene,
+    const std::shared_ptr<Texture2D>& sphereTexture,
+    const std::shared_ptr<Texture2D>& maryTexture,
+    const std::string& maryObjPath)
 {
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
-    scene.objects.emplace_back(std::make_unique<Triangle>());
+    // scene.objects.emplace_back(std::make_unique<Triangle>());
     
     // auto triangle = std::make_unique<Triangle>();
     // triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
     // scene.objects.emplace_back(std::move(triangle));
 
-    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
-    sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
-    scene.objects.emplace_back(std::move(sphere));
+    // auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
+    // sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
+    // sphere->setTexture(sphereTexture);
+    // scene.objects.emplace_back(std::move(sphere));
 
     // auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
     // cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
     // scene.objects.emplace_back(std::move(cube));
 
-    // ObjMeshData MaryMesh;
-    // const bool ok = ObjLoader::LoadFromFile("assets/teapot.obj", MaryMesh);
-    // if (!ok || MaryMesh.empty()) {
-    //     std::cerr << "Failed to load teapot.obj" << std::endl;
-    //     return;
-    // }
-    // for(const auto& vertex : MaryMesh.vertices) {
-    //     Triangle* tri = new Triangle();
-    //     // tri->setVertexs({
-    //     //     glm::vec4(vertex.position, 1.0f),
-    //     //     glm::vec4(vertex.position, 1.0f),
-    //     //     glm::vec4(vertex.position, 1.0f)
-    //     // });
-        
-    // }
+    ObjMeshData MaryMesh;
+    const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
+    if (!ok || MaryMesh.empty()) {
+        std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
+        return;
+    }
+
+    (void)sphereTexture;
+
+    auto maryObject = std::make_unique<MeshObject>(MaryMesh);
+    maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    maryObject->setTexture(maryTexture);
+    scene.objects.emplace_back(std::move(maryObject));
 
 }
 
 int main(int argc, char* argv[])
 {
-    Scene scene;
-    CreateScene(scene);
+    const char* argv0 = argc > 0 ? argv[0] : nullptr;
+    const std::string sphereTexturePath = ResolveSphereTexturePath(argv0);
+    const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
+    const std::string maryObjPath = ResolveMaryObjPath(argv0);
 
-    SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
-    const std::string sphereTexturePath = ResolveSphereTexturePath(argc > 0 ? argv[0] : nullptr);
-    if (!renderer.loadSphereTexture(sphereTexturePath)) {
+    auto sphereTexture = std::make_shared<Texture2D>();
+    if (!sphereTexture->loadFromFile(sphereTexturePath)) {
+        sphereTexture->createCheckerboard(
+            1024,
+            512,
+            32,
+            glm::vec3(0.95f, 0.95f, 0.95f),
+            glm::vec3(0.12f, 0.38f, 0.78f));
         std::cout << "Sphere texture: using generated checkerboard (texture not found)" << '\n';
     } else {
         std::cout << "Sphere texture loaded from: " << sphereTexturePath << '\n';
     }
+
+    std::shared_ptr<Texture2D> maryTexture = std::make_shared<Texture2D>();
+    if (!maryTexture->loadFromFile(maryTexturePath)) {
+        maryTexture.reset();
+        std::cout << "Mary texture: not found, rendering with vertex color" << '\n';
+    } else {
+        std::cout << "Mary texture loaded from: " << maryTexturePath << '\n';
+    }
+
+    Scene scene;
+    CreateScene(scene, sphereTexture, maryTexture, maryObjPath);
+
+    SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
+    renderer.setBackfaceCullingEnabled(true);
+    renderer.setMsaaSampleCount(1);
     std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
+    std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
+    std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
@@ -163,6 +230,18 @@ int main(int argc, char* argv[])
                 std::cout << "Wireframe overlay: "
                           << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
                           << " (press F1 to toggle)" << '\n';
+            }
+            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F2) {
+                renderer.toggleBackfaceCulling();
+                std::cout << "Back-face culling: "
+                          << (renderer.backfaceCullingEnabled() ? "ON" : "OFF")
+                          << " (press F2 to toggle)" << '\n';
+            }
+            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F3) {
+                renderer.setMsaaSampleCount(NextMsaaSampleCount(renderer.msaaSampleCount()));
+                std::cout << "MSAA samples: "
+                          << renderer.msaaSampleCount()
+                          << "x (press F3 to cycle 1x/2x/4x)" << '\n';
             }
         }
         renderer.clear({ 0, 0, 0, 255 });

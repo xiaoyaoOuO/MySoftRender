@@ -1,5 +1,7 @@
 #pragma once
 #include "Object.h"
+#include "ObjLoader.h"
+#include <array>
 
 /**
  * @brief 代表一个三角形的类，继承自Object类。
@@ -9,6 +11,7 @@ class Triangle : public Object
 private:
     glm::vec4 vertexs[3]; // 每个顶点的齐次坐标
     glm::vec3 colors[3]; // 每个顶点的颜色
+    glm::vec2 texCoords[3]; // 每个顶点的纹理坐标
     glm::vec3 normal; // 三角形的法线向量
 public:
     Triangle(
@@ -17,7 +20,10 @@ public:
         const glm::vec4& v2 = glm::vec4(0.5f, -0.5f, 0.0f, 1.0f),
         const glm::vec3& c0 = glm::vec3(1.0f, 0.0f, 0.0f),
         const glm::vec3& c1 = glm::vec3(0.0f, 1.0f, 0.0f),
-        const glm::vec3& c2 = glm::vec3(0.0f, 0.0f, 1.0f)) : Object()
+        const glm::vec3& c2 = glm::vec3(0.0f, 0.0f, 1.0f),
+        const glm::vec2& t0 = glm::vec2(0.0f, 0.0f),
+        const glm::vec2& t1 = glm::vec2(1.0f, 0.0f),
+        const glm::vec2& t2 = glm::vec2(0.5f, 1.0f)) : Object()
     {
         vertexs[0] = v0;
         vertexs[1] = v1;
@@ -25,12 +31,26 @@ public:
         colors[0] = c0;
         colors[1] = c1;
         colors[2] = c2;
+        texCoords[0] = t0;
+        texCoords[1] = t1;
+        texCoords[2] = t2;
 
         // 计算法线向量
         normal = glm::normalize(glm::cross(glm::vec3(v1 - v0), glm::vec3(v2 - v0)));
     }
 
+    Triangle(const std::array<Vertex, 3>& vertices) : Object()
+    {
+        for (size_t i = 0; i < 3; ++i) {
+            vertexs[i] = glm::vec4(vertices[i].position, 1.0f);
+            colors[i] = vertices[i].color;
+            texCoords[i] = vertices[i].texCoord;
+        }
+        normal = glm::normalize(glm::cross(glm::vec3(vertexs[1] - vertexs[0]), glm::vec3(vertexs[2] - vertexs[0])));
+    }
+
     const glm::vec4* getVertexs() const { return vertexs; }
     const glm::vec3* getColors() const { return colors; }
+    const glm::vec2* getTexCoords() const { return texCoords; }
     const glm::vec3& getNormal() const { return normal; }
 };

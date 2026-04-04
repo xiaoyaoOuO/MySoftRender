@@ -302,6 +302,9 @@ bool ObjLoader::LoadFromFile(const std::string& filePath, ObjMeshData& outMesh, 
                 SetError(outError, "Invalid texture coordinate at line " + std::to_string(lineNumber));
                 return false;
             }
+            // OBJ 的 V 约定通常以底部为 0，而当前纹理采样以图像顶部为 0。
+            // 这里在导入时统一翻转 V，避免模型贴图上下颠倒。
+            uv.y = 1.0f - uv.y;
             texCoords.push_back(uv);
             continue;
         }

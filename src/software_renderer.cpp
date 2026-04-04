@@ -1,6 +1,7 @@
 #include "software_renderer.h"
 #include "Sphere.h"
 #include "Cube.h"
+#include "MeshObject.h"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +15,6 @@ SoftwareRenderer::SoftwareRenderer(int width, int height)
     : width_(width), height_(height), rasterizer_(width, height)
 {
     colorBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
-    useDefaultSphereTexture();
 }
 
 void SoftwareRenderer::clear(const Color& color)
@@ -39,6 +39,31 @@ int SoftwareRenderer::height() const
     return height_;
 }
 
+bool SoftwareRenderer::backfaceCullingEnabled() const
+{
+    return rasterizer_.backfaceCullingEnabled();
+}
+
+void SoftwareRenderer::setBackfaceCullingEnabled(bool enabled)
+{
+    rasterizer_.setBackfaceCullingEnabled(enabled);
+}
+
+void SoftwareRenderer::toggleBackfaceCulling()
+{
+    rasterizer_.toggleBackfaceCulling();
+}
+
+int SoftwareRenderer::msaaSampleCount() const
+{
+    return rasterizer_.msaaSampleCount();
+}
+
+void SoftwareRenderer::setMsaaSampleCount(int sampleCount)
+{
+    rasterizer_.setMsaaSampleCount(sampleCount);
+}
+
 bool SoftwareRenderer::wireframeOverlayEnabled() const
 {
     return rasterizer_.wireframeOverlayEnabled();
@@ -52,21 +77,6 @@ void SoftwareRenderer::setWireframeOverlayEnabled(bool enabled)
 void SoftwareRenderer::toggleWireframeOverlay()
 {
     rasterizer_.toggleWireframeOverlay();
-}
-
-bool SoftwareRenderer::loadSphereTexture(const std::string& texturePath)
-{
-    return sphereTexture_.loadFromFile(texturePath);
-}
-
-void SoftwareRenderer::useDefaultSphereTexture()
-{
-    sphereTexture_.createCheckerboard(
-        1024,
-        512,
-        32,
-        glm::vec3(0.95f, 0.95f, 0.95f),
-        glm::vec3(0.12f, 0.38f, 0.78f));
 }
 
 std::uint32_t SoftwareRenderer::packColor(const Color& color)
@@ -137,18 +147,39 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     for(const auto& obj : scene.objects)
     {
         const glm::mat4 mvp = viewProjection * obj->modelMatrix();
+        const Texture2D* objectTexture = obj->hasTexture() ? obj->texture().get() : nullptr;
 
-        if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
+        if (const MeshObject* meshObject = dynamic_cast<MeshObject*>(obj.get())) {
+            if (!meshObject->hasMesh()) {
+                continue;
+            }
+
+            const ObjMeshData& mesh = meshObject->mesh();
+            for (const glm::uvec3& face : mesh.indices) {
+                std::array<Vertex, 3> localVertices;
+                bool faceValid = true;
+                for (int i = 0; i < 3; ++i) {
+                    const std::uint32_t vertexIndex = face[i];
+                    if (vertexIndex >= mesh.vertices.size()) {
+                        faceValid = false;
+                        break;
+                    }
+                    localVertices[i] = mesh.vertices[vertexIndex];
+                }
+                if (!faceValid) {
+                    continue;
+                }
+                rasterizeLocalTriangle(mvp, localVertices, objectTexture);
+            }
+        } else if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
             std::array<Vertex, 3> localVertices;
             for (int i = 0; i < 3; ++i) {
                 localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
                 localVertices[i].color = tri->getColors()[i];
+                localVertices[i].texCoord = tri->getTexCoords()[i];
             }
-            rasterizeLocalTriangle(mvp, localVertices);
-            continue;
-        }
-
-        if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
+            rasterizeLocalTriangle(mvp, localVertices, objectTexture);
+        }else if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
             const auto& sphereVertices = sphere->vertices();
             const auto& sphereIndices = sphere->indices();
             const auto& sphereColors = sphere->vertexColors();
@@ -162,12 +193,9 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                     localVertices[i].color = sphereColors[idx];
                     localVertices[i].texCoord = sphereUVs[idx];
                 }
-                rasterizeLocalTriangle(mvp, localVertices, &sphereTexture_);
+                rasterizeLocalTriangle(mvp, localVertices, objectTexture);
             }
-            continue;
-        }
-
-        if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
+        }else if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
             const auto& cubeVertices = cube->vertices();
             const auto& cubeIndices = cube->indices();
             const auto& cubeColor = cube->color();
@@ -180,7 +208,6 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 }
                 rasterizeLocalTriangle(mvp, localVertices);
             }
-            continue;
         }
     }
 
