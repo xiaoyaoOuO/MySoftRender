@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <glm/vec3.hpp>
 #include <vector>

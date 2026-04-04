@@ -1,5 +1,6 @@
 #pragma once
 #include "Triangle.h"
+#include "ObjLoader.h"
 #include <array>
 #include <vector>
 #include <cmath>
@@ -106,13 +107,12 @@ public:
     void setWireframeOverlayEnabled(bool enabled) { wireframeOverlayEnabled_ = enabled; }
     void toggleWireframeOverlay() { wireframeOverlayEnabled_ = !wireframeOverlayEnabled_; }
 
+    // 作用：清除帧缓冲和所有相关的状态（如 ZBuffer，片段缓存等）
     void Clear();
-    void Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors);
-    void Rasterize_Triangle(
-        const std::array<glm::vec3, 3>& vertexs,
-        const std::array<glm::vec3, 3>& colors,
-        const std::array<glm::vec2, 3>& texCoords,
-        const Texture2D& texture);
+
+    // 作用：将包含位置、颜色、法线、UV 坐标的 Vertex 结构体进行光栅化
+    // 用法：可选择是否传入 texture 纹理指针，如果为空则走纯色填充逻辑
+    void Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const Texture2D* texture = nullptr);
 
 private:
     static constexpr int kMsaaSampleCount = 4;

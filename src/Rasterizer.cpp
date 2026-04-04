@@ -2,7 +2,11 @@
 #include "Texture.h"
 
 namespace {
+// 作用：定义当前光栅器使用的固定 4x MSAA 采样数量。
+// 用法：所有 sample 缓冲都按 pixelIndex * kMsaaSamples 展开存储，若调整采样数需同步修改偏移与缓冲初始化逻辑。
 constexpr int kMsaaSamples = 4;
+// 作用：定义每个像素内部 4 个子采样点的偏移位置。
+// 用法：在遍历像素时，将像素左上角整数坐标加上该偏移得到 samplePoint，用于覆盖测试与重心插值。
 constexpr std::array<Vec2, kMsaaSamples> kMsaaOffsets = {
     Vec2{0.25f, 0.25f},
     Vec2{0.75f, 0.25f},
@@ -10,6 +14,8 @@ constexpr std::array<Vec2, kMsaaSamples> kMsaaOffsets = {
     Vec2{0.75f, 0.75f}
 };
 
+// 作用：把像素索引与子采样索引映射到 sample 缓冲的一维下标。
+// 用法：访问 sampleZBuffer、sampleColorBuffer、sampleNormalBuffer 时统一调用，sampleIndex 范围为 [0, kMsaaSamples)。
 size_t SampleBufferIndex(size_t pixelIndex, int sampleIndex)
 {
     return pixelIndex * static_cast<size_t>(kMsaaSamples) + static_cast<size_t>(sampleIndex);
@@ -26,6 +32,8 @@ Color ToColor(const glm::vec3& color)
     };
 }
 
+// 作用：将一个像素对应的 4 个 sample 深度解析为最终像素深度。
+// 用法：在像素完成 sample 级深度写入后调用，返回最靠前（最小）的深度，用于更新像素级 zBuffer。
 float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuffer)
 {
     float minDepth = std::numeric_limits<float>::infinity();
@@ -35,6 +43,8 @@ float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuff
     return minDepth;
 }
 
+// 作用：将一个像素的 4 个 sample 颜色做平均，得到最终像素颜色。
+// 用法：在通过深度测试的 sample 写入颜色后调用，结果再通过 ToColor 转为 8-bit RGBA 输出。
 glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sampleColorBuffer)
 {
     glm::vec3 accumulated(0.0f);
@@ -44,13 +54,15 @@ glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sam
     return accumulated * (1.0f / static_cast<float>(kMsaaSamples));
 }
 
+// 作用：从与解析深度匹配的 sample 中恢复像素法线，供后续调试显示或可视化使用。
+// 用法：先传入 ResolvePixelDepth 的结果，再从 sampleNormalBuffer 中挑选深度最接近的法线返回。
 glm::vec3 ResolvePixelNormal(
     size_t pixelIndex,
     float resolvedDepth,
     const std::vector<float>& sampleZBuffer,
     const std::vector<glm::vec3>& sampleNormalBuffer)
 {
-    constexpr float kDepthEpsilon = 1e-6f;
+    static constexpr float kDepthEpsilon = 1e-6f;
     for (int sampleIndex = 0; sampleIndex < kMsaaSamples; ++sampleIndex) {
         const size_t index = SampleBufferIndex(pixelIndex, sampleIndex);
         if (std::abs(sampleZBuffer[index] - resolvedDepth) <= kDepthEpsilon) {
@@ -69,8 +81,8 @@ void RasterizeLine(
     std::vector<float>& zBuffer,
     std::vector<Fragment>& fragments)
 {
-    constexpr float kEdgeDepthBias = 1e-4f;
-    constexpr Color kEdgeColor = {255, 255, 255, 255};
+    static constexpr float kEdgeDepthBias = 1e-4f;
+    static constexpr Color kEdgeColor = {255, 255, 255, 255};
 
     const int x0 = static_cast<int>(std::round(v0.x));
     const int y0 = static_cast<int>(std::round(v0.y));
@@ -119,6 +131,8 @@ void RasterizeLine(
     }
 }
 
+// 作用：执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。
+// 用法：由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
 template <typename ShadePixelFunc>
 void RasterizeTriangleMSAA(
     const std::array<glm::vec3, 3>& vertexs,
@@ -278,58 +292,37 @@ void Rasterizer::Clear()
     fragments_.clear();
 }
 
-void Rasterizer::Rasterize_Triangle(const std::array<glm::vec3, 3>& vertexs, const std::array<glm::vec3, 3>& colors)
+void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const Texture2D* texture)
 {
+    // 如果开启了线框模式，则仅绘制三角形的边缘线段。
     if (wireframeOverlayEnabled_) {
-        const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
-        RasterizeLine(vertexs[0], vertexs[1], triangleNormal, width_, height_, zBuffer_, fragments_);
-        RasterizeLine(vertexs[1], vertexs[2], triangleNormal, width_, height_, zBuffer_, fragments_);
-        RasterizeLine(vertexs[2], vertexs[0], triangleNormal, width_, height_, zBuffer_, fragments_);
+        const glm::vec3 triangleNormal = VectorMath::getNormal(vertices[0].position, vertices[1].position, vertices[2].position);
+        RasterizeLine(vertices[0].position, vertices[1].position, triangleNormal, width_, height_, zBuffer_, fragments_);
+        RasterizeLine(vertices[1].position, vertices[2].position, triangleNormal, width_, height_, zBuffer_, fragments_);
+        RasterizeLine(vertices[2].position, vertices[0].position, triangleNormal, width_, height_, zBuffer_, fragments_);
         return;
     }
 
-    RasterizeTriangleMSAA(
-        vertexs,
-        width_,
-        height_,
-        zBuffer_,
-        sampleZBuffer_,
-        sampleColorBuffer_,
-        sampleNormalBuffer_,
-        fragmentLut_,
-        fragments_,
-        [&](float w0, float w1, float w2) {
-            return colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
-        });
-}
+    std::array<glm::vec3, 3> screenPositions = {vertices[0].position, vertices[1].position, vertices[2].position};
 
-void Rasterizer::Rasterize_Triangle(
-    const std::array<glm::vec3, 3>& vertexs,
-    const std::array<glm::vec3, 3>& colors,
-    const std::array<glm::vec2, 3>& texCoords,
-    const Texture2D& texture)
-{
-    if (wireframeOverlayEnabled_) {
-        const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
-        RasterizeLine(vertexs[0], vertexs[1], triangleNormal, width_, height_, zBuffer_, fragments_);
-        RasterizeLine(vertexs[1], vertexs[2], triangleNormal, width_, height_, zBuffer_, fragments_);
-        RasterizeLine(vertexs[2], vertexs[0], triangleNormal, width_, height_, zBuffer_, fragments_);
-        return;
-    }
-
-    std::array<glm::vec2, 3> seamSafeTexCoords = texCoords;
-    const float minU = std::min({texCoords[0].x, texCoords[1].x, texCoords[2].x});
-    const float maxU = std::max({texCoords[0].x, texCoords[1].x, texCoords[2].x});
-    if (maxU - minU > 0.5f) {
-        for (glm::vec2& uv : seamSafeTexCoords) {
-            if (uv.x < 0.5f) {
-                uv.x += 1.0f;
+    // 若传入了有效的纹理对象，则处理 UV 缝隙修复
+    std::array<glm::vec2, 3> seamSafeTexCoords = {vertices[0].texCoord, vertices[1].texCoord, vertices[2].texCoord};
+    if (texture) {
+        const float minU = std::min({vertices[0].texCoord.x, vertices[1].texCoord.x, vertices[2].texCoord.x});
+        const float maxU = std::max({vertices[0].texCoord.x, vertices[1].texCoord.x, vertices[2].texCoord.x});
+        if (maxU - minU > 0.5f) {
+            for (glm::vec2& uv : seamSafeTexCoords) {
+                if (uv.x < 0.5f) {
+                    uv.x += 1.0f;
+                }
             }
         }
     }
 
+    // 调用底层核心 MSAA 渲染函数。
+    // 在 Lambda 回调中，通过计算得到的重心坐标(w0, w1, w2)插值计算每个被覆盖像素的颜色。
     RasterizeTriangleMSAA(
-        vertexs,
+        screenPositions,
         width_,
         height_,
         zBuffer_,
@@ -339,6 +332,15 @@ void Rasterizer::Rasterize_Triangle(
         fragmentLut_,
         fragments_,
         [&](float w0, float w1, float w2) {
+            // 基本颜色插值
+            const glm::vec3 vertexColor = vertices[0].color * w0 + vertices[1].color * w1 + vertices[2].color * w2;
+            
+            // 无纹理时直接返回顶点颜色插值
+            if (!texture) {
+                return vertexColor;
+            }
+
+            // 处理有纹理情况，对纹理坐标进行插值
             float u = seamSafeTexCoords[0].x * w0 + seamSafeTexCoords[1].x * w1 + seamSafeTexCoords[2].x * w2;
             u -= std::floor(u);
             const float v = std::clamp(
@@ -346,7 +348,6 @@ void Rasterizer::Rasterize_Triangle(
                 0.0f,
                 1.0f);
 
-            const glm::vec3 vertexColor = colors[0] * w0 + colors[1] * w1 + colors[2] * w2;
-            return texture.sample(u, v) * vertexColor;
+            return texture->sample(u, v) * vertexColor;
         });
 }

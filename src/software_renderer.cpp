@@ -100,15 +100,14 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
 
     rasterizer_.Clear();
     
-    //先做MVP变换，得到屏幕空间坐标，然后调用drawTriangle()函数进行光栅化。
+    //先做MVP变换，得到屏幕空间坐标，然后调用 Rasterize_Triangle() 函数进行光栅化。
     const glm::mat4 viewProjection = scene.camera->projectionMatrix() * scene.camera->viewMatrix();
 
     auto projectLocalTriangleToScreen = [&](const glm::mat4& mvp,
-                                            const std::array<glm::vec4, 3>& localVertices,
-                                            std::array<glm::vec3, 3>& screenVertices) {
+                                            std::array<Vertex, 3>& vertices) {
         glm::vec4 ndcVertices[3];
         for (int i = 0; i < 3; ++i) {
-            const glm::vec4 clipVertex = mvp * localVertices[i];
+            const glm::vec4 clipVertex = mvp * glm::vec4(vertices[i].position, 1.0f);
             if (std::abs(clipVertex.w) <= 1e-6f) {
                 return false;
             }
@@ -116,36 +115,23 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         }
 
         for (int i = 0; i < 3; ++i) {
-            screenVertices[i].x = (ndcVertices[i].x + 1.0f) * 0.5f * width_;
-            screenVertices[i].y = (1.0f - (ndcVertices[i].y + 1.0f) * 0.5f) * height_;
-            screenVertices[i].z = (ndcVertices[i].z + 1.0f) * 0.5f;
+            vertices[i].position.x = (ndcVertices[i].x + 1.0f) * 0.5f * width_;
+            vertices[i].position.y = (1.0f - (ndcVertices[i].y + 1.0f) * 0.5f) * height_;
+            vertices[i].position.z = (ndcVertices[i].z + 1.0f) * 0.5f;
         }
 
         return true;
     };
 
     auto rasterizeLocalTriangle = [&](const glm::mat4& mvp,
-                                      const std::array<glm::vec4, 3>& localVertices,
-                                      const std::array<glm::vec3, 3>& colors) {
-        std::array<glm::vec3, 3> screenVertices;
-        if (!projectLocalTriangleToScreen(mvp, localVertices, screenVertices)) {
+                                      const std::array<Vertex, 3>& localVertices,
+                                      const Texture2D* texture = nullptr) {
+        std::array<Vertex, 3> screenVertices = localVertices;
+        if (!projectLocalTriangleToScreen(mvp, screenVertices)) {
             return;
         }
 
-        rasterizer_.Rasterize_Triangle(screenVertices, colors);
-    };
-
-    auto rasterizeLocalTexturedTriangle = [&](const glm::mat4& mvp,
-                                              const std::array<glm::vec4, 3>& localVertices,
-                                              const std::array<glm::vec3, 3>& colors,
-                                              const std::array<glm::vec2, 3>& texCoords,
-                                              const Texture2D& texture) {
-        std::array<glm::vec3, 3> screenVertices;
-        if (!projectLocalTriangleToScreen(mvp, localVertices, screenVertices)) {
-            return;
-        }
-
-        rasterizer_.Rasterize_Triangle(screenVertices, colors, texCoords, texture);
+        rasterizer_.Rasterize_Triangle(screenVertices, texture);
     };
 
     for(const auto& obj : scene.objects)
@@ -153,17 +139,12 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         const glm::mat4 mvp = viewProjection * obj->modelMatrix();
 
         if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
-            const std::array<glm::vec4, 3> localVertices = {
-                tri->getVertexs()[0],
-                tri->getVertexs()[1],
-                tri->getVertexs()[2]
-            };
-            const std::array<glm::vec3, 3> colors = {
-                tri->getColors()[0],
-                tri->getColors()[1],
-                tri->getColors()[2]
-            };
-            rasterizeLocalTriangle(mvp, localVertices, colors);
+            std::array<Vertex, 3> localVertices;
+            for (int i = 0; i < 3; ++i) {
+                localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
+                localVertices[i].color = tri->getColors()[i];
+            }
+            rasterizeLocalTriangle(mvp, localVertices);
             continue;
         }
 
@@ -174,23 +155,16 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             const auto& sphereUVs = sphere->vertexUVs();
 
             for (const glm::uvec3& face : sphereIndices) {
-                const std::array<glm::vec4, 3> localVertices = {
-                    sphereVertices[face.x],
-                    sphereVertices[face.y],
-                    sphereVertices[face.z]
-                };
-                const std::array<glm::vec3, 3> colors = {
-                    sphereColors[face.x],
-                    sphereColors[face.y],
-                    sphereColors[face.z]
-                };
-                const std::array<glm::vec2, 3> texCoords = {
-                    sphereUVs[face.x],
-                    sphereUVs[face.y],
-                    sphereUVs[face.z]
-                };
-                rasterizeLocalTexturedTriangle(mvp, localVertices, colors, texCoords, sphereTexture_);
+                std::array<Vertex, 3> localVertices;
+                for (int i = 0; i < 3; ++i) {
+                    int idx = face[i];
+                    localVertices[i].position = glm::vec3(sphereVertices[idx]);
+                    localVertices[i].color = sphereColors[idx];
+                    localVertices[i].texCoord = sphereUVs[idx];
+                }
+                rasterizeLocalTriangle(mvp, localVertices, &sphereTexture_);
             }
+            continue;
         }
 
         if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
@@ -199,18 +173,14 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             const auto& cubeColor = cube->color();
 
             for (const glm::uvec3& face : cubeIndices) {
-                const std::array<glm::vec4, 3> localVertices = {
-                    glm::vec4(cubeVertices[face.x], 1.0f),
-                    glm::vec4(cubeVertices[face.y], 1.0f),
-                    glm::vec4(cubeVertices[face.z], 1.0f)
-                };
-                const std::array<glm::vec3, 3> colors = {
-                    cubeColor,
-                    cubeColor,
-                    cubeColor
-                };
-                rasterizeLocalTriangle(mvp, localVertices, colors);
+                std::array<Vertex, 3> localVertices;
+                for (int i = 0; i < 3; ++i) {
+                    localVertices[i].position = cubeVertices[face[i]];
+                    localVertices[i].color = cubeColor;
+                }
+                rasterizeLocalTriangle(mvp, localVertices);
             }
+            continue;
         }
     }
 

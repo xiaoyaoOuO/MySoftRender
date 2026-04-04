@@ -6,6 +6,7 @@
 #include "Cube.h"
 #include "Sphere.h"
 #include "software_renderer.h"
+#include "ObjLoader.h"
 #include <iostream>
 #include <memory>
 #include <cstdio>
@@ -52,19 +53,36 @@ void CreateScene(Scene& scene)
 {
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
-    // scene.objects.emplace_back(std::make_unique<Triangle>());
+    scene.objects.emplace_back(std::make_unique<Triangle>());
     
-    auto triangle = std::make_unique<Triangle>();
-    triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
-    scene.objects.emplace_back(std::move(triangle));
+    // auto triangle = std::make_unique<Triangle>();
+    // triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
+    // scene.objects.emplace_back(std::move(triangle));
 
     auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
     sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
     scene.objects.emplace_back(std::move(sphere));
 
-    auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
-    cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
-    scene.objects.emplace_back(std::move(cube));
+    // auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
+    // cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
+    // scene.objects.emplace_back(std::move(cube));
+
+    // ObjMeshData MaryMesh;
+    // const bool ok = ObjLoader::LoadFromFile("assets/teapot.obj", MaryMesh);
+    // if (!ok || MaryMesh.empty()) {
+    //     std::cerr << "Failed to load teapot.obj" << std::endl;
+    //     return;
+    // }
+    // for(const auto& vertex : MaryMesh.vertices) {
+    //     Triangle* tri = new Triangle();
+    //     // tri->setVertexs({
+    //     //     glm::vec4(vertex.position, 1.0f),
+    //     //     glm::vec4(vertex.position, 1.0f),
+    //     //     glm::vec4(vertex.position, 1.0f)
+    //     // });
+        
+    // }
+
 }
 
 int main(int argc, char* argv[])
