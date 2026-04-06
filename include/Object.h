@@ -25,9 +25,9 @@ public:
     const glm::vec3& getRotation() const { return rotation; }
     const glm::vec3& getScale() const { return scale; }
 
-    virtual void setPosition(const glm::vec3& pos) { position = pos; }
-    virtual void setRotation(const glm::vec3& rot) { rotation = rot; }
-    virtual void setScale(const glm::vec3& scl) { scale = scl; }
+    virtual void setPosition(const glm::vec3& pos) { position = pos; modelMatrixDirty = true; }
+    virtual void setRotation(const glm::vec3& rot) { rotation = rot; modelMatrixDirty = true; }
+    virtual void setScale(const glm::vec3& scl) { scale = scl; modelMatrixDirty = true; }
 
     // 作用：为对象绑定纹理资源。
     // 用法：传入共享纹理指针后，渲染阶段可按对象读取并使用该纹理。
@@ -45,18 +45,23 @@ public:
     // 用法：渲染器通过 get() 拿到 Texture2D* 传给光栅器。
     const std::shared_ptr<Texture2D>& texture() const { return texture_; }
 
-    void translate(const glm::vec3& delta) { position += delta; }
-    void rotate(const glm::vec3& deltaEulerDeg) { rotation += deltaEulerDeg; }
+    void translate(const glm::vec3& delta) { position += delta; modelMatrixDirty = true; }
+    void rotate(const glm::vec3& deltaEulerDeg) { rotation += deltaEulerDeg; modelMatrixDirty = true; }
 
     glm::mat4 modelMatrix() const
     {
+        if(!modelMatrixDirty){
+            return cachedModelMatrix;
+        }
         glm::mat4 model(1.0f);
         model = glm::translate(model, position);
         model = glm::rotate(model, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
         model = glm::rotate(model, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
         model = glm::rotate(model, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
         model = glm::scale(model, scale);
-        return model;
+        cachedModelMatrix = model;
+        modelMatrixDirty = false;
+        return cachedModelMatrix;
     }
 
 protected:
@@ -64,4 +69,8 @@ protected:
     glm::vec3 rotation; // 物体的旋转（欧拉角）
     glm::vec3 scale;    // 物体的缩放
     std::shared_ptr<Texture2D> texture_; // 对象绑定的纹理资源（可为空）
+
+    //缓存model矩阵以及dirty标志位，避免每帧重复计算
+    mutable glm::mat4 cachedModelMatrix;
+    mutable bool modelMatrixDirty = true;
 };
