@@ -13,6 +13,7 @@
 #include <memory>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -84,6 +85,99 @@ int NextMsaaSampleCount(int currentSampleCount)
         return 4;
     }
     return 1;
+}
+
+// 作用：根据事件驱动维护的按键状态，执行 FPS 相机 WASD 平面移动。
+// 用法：主循环中持续传入当前 W/A/S/D 是否按下与 deltaTime，即可得到稳定的连续移动。
+void MoveCameraWithInput(
+    Camera& camera,
+    bool moveForward,
+    bool moveBackward,
+    bool moveLeft,
+    bool moveRight,
+    float deltaTime)
+{
+    // 作用：将相机前向向量投影到水平面，构建 FPS 常见的“只在地面平移”的移动基。
+    // 用法：每帧传入按键布尔状态与 deltaTime，即可得到与帧率无关的 WASD 位移。
+    const glm::vec3 rawForward = camera.target() - camera.position();
+    if (glm::dot(rawForward, rawForward) <= 1e-8f) {
+        return;
+    }
+
+    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    glm::vec3 forwardOnGround(rawForward.x, 0.0f, rawForward.z);
+    if (glm::dot(forwardOnGround, forwardOnGround) <= 1e-8f) {
+        forwardOnGround = glm::vec3(0.0f, 0.0f, -1.0f);
+    }
+    forwardOnGround = glm::normalize(forwardOnGround);
+    const glm::vec3 rightOnGround = glm::normalize(glm::cross(forwardOnGround, worldUp));
+
+    const float moveSpeed = camera.speed() * deltaTime;
+    glm::vec3 moveDelta(0.0f);
+
+    if (moveForward) {
+        moveDelta += forwardOnGround * moveSpeed;
+    }
+    if (moveBackward) {
+        moveDelta -= forwardOnGround * moveSpeed;
+    }
+    if (moveLeft) {
+        moveDelta -= rightOnGround * moveSpeed;
+    }
+    if (moveRight) {
+        moveDelta += rightOnGround * moveSpeed;
+    }
+
+    if (glm::dot(moveDelta, moveDelta) > 0.0f) {
+        camera.move(moveDelta);
+    }
+}
+
+// 作用：从当前相机朝向反解出 yaw/pitch 角，便于鼠标视角控制从现有视角连续接管。
+// 用法：场景初始化完成后调用一次，得到可直接用于 FPS 鼠标控制的初始角度。
+void ExtractYawPitchFromCamera(const Camera& camera, float& yawDeg, float& pitchDeg)
+{
+    const glm::vec3 rawForward = camera.target() - camera.position();
+    if (glm::dot(rawForward, rawForward) <= 1e-8f) {
+        yawDeg = 0.0f;
+        pitchDeg = 0.0f;
+        return;
+    }
+
+    const glm::vec3 forward = glm::normalize(rawForward);
+    pitchDeg = glm::degrees(std::asin(forward.y));
+    yawDeg = glm::degrees(std::atan2(forward.x, -forward.z));
+}
+
+// 作用：根据 yaw/pitch 角重建相机前向与上方向，形成标准 FPS 视角。
+// 用法：在鼠标移动后更新 yaw/pitch 并调用该函数，即可实现稳定的水平转向与俯仰。
+void ApplyYawPitchToCamera(Camera& camera, float yawDeg, float pitchDeg)
+{
+    const float yawRad = glm::radians(yawDeg);
+    const float pitchRad = glm::radians(pitchDeg);
+
+    glm::vec3 forward;
+    forward.x = std::sin(yawRad) * std::cos(pitchRad);
+    forward.y = std::sin(pitchRad);
+    forward.z = -std::cos(yawRad) * std::cos(pitchRad);
+
+    if (glm::dot(forward, forward) <= 1e-8f) {
+        forward = glm::vec3(0.0f, 0.0f, -1.0f);
+    } else {
+        forward = glm::normalize(forward);
+    }
+
+    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    glm::vec3 right = glm::cross(forward, worldUp);
+    if (glm::dot(right, right) <= 1e-8f) {
+        right = glm::vec3(1.0f, 0.0f, 0.0f);
+    } else {
+        right = glm::normalize(right);
+    }
+    const glm::vec3 cameraUp = glm::normalize(glm::cross(right, forward));
+
+    camera.setTarget(camera.position() + forward);
+    camera.setUp(cameraUp);
 }
 }
 
@@ -215,35 +309,156 @@ int main(int argc, char* argv[])
     Uint64 fpsWindowStartCounter = SDL_GetPerformanceCounter();
     Uint64 lastFrameCounter = fpsWindowStartCounter;
     int fpsFrameCount = 0;
+    bool moveForward = false;
+    bool moveBackward = false;
+    bool moveLeft = false;
+    bool moveRight = false;
+
+    float cameraYawDeg = 0.0f;
+    float cameraPitchDeg = 0.0f;
+    constexpr float kMouseSensitivityDegPerPixel = 0.12f;
+    constexpr float kMaxPitchDeg = 89.0f;
+    bool mouseCaptureEnabled = true;
+
+    if (scene.camera) {
+        ExtractYawPitchFromCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
+        ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
+    }
+
+    // 作用：启用相对鼠标模式，用鼠标位移驱动 FPS 视角旋转。
+    // 用法：进入渲染循环前开启；失焦时会临时关闭，回到窗口时自动恢复。
+    if (SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
+        std::cerr << "SDL_SetRelativeMouseMode failed: " << SDL_GetError() << '\n';
+        mouseCaptureEnabled = false;
+    } else {
+        SDL_SetWindowGrab(window, SDL_TRUE);
+        SDL_ShowCursor(SDL_DISABLE);
+        std::cout << "Mouse look: ON (move mouse to yaw/pitch)" << '\n';
+    }
 
     while (running) {
+        const Uint64 nowCounter = SDL_GetPerformanceCounter();
+        const float deltaTime = static_cast<float>(nowCounter - lastFrameCounter) / static_cast<float>(perfFrequency);
+        lastFrameCounter = nowCounter;
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
             }
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
-                running = false;
+
+            // 作用：将鼠标相对位移转换为 FPS 相机的 yaw/pitch 变化。
+            // 用法：保持窗口聚焦并移动鼠标，即可水平转向与上下俯仰。
+            if (event.type == SDL_MOUSEMOTION && mouseCaptureEnabled && scene.camera) {
+                cameraYawDeg += static_cast<float>(event.motion.xrel) * kMouseSensitivityDegPerPixel;
+                cameraPitchDeg -= static_cast<float>(event.motion.yrel) * kMouseSensitivityDegPerPixel;
+
+                if (cameraPitchDeg > kMaxPitchDeg) {
+                    cameraPitchDeg = kMaxPitchDeg;
+                }
+                if (cameraPitchDeg < -kMaxPitchDeg) {
+                    cameraPitchDeg = -kMaxPitchDeg;
+                }
+
+                ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
             }
-            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F1) {
-                renderer.toggleWireframeOverlay();
-                std::cout << "Wireframe overlay: "
-                          << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
-                          << " (press F1 to toggle)" << '\n';
+
+            // 作用：用 KEYDOWN/KEYUP 维护 WASD 持续按下状态，避免依赖全局键盘状态数组。
+            // 用法：按下时置 true，抬起时置 false，后续移动逻辑直接读取该状态。
+            if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                const bool isKeyDown = (event.type == SDL_KEYDOWN);
+                const SDL_Keycode sym = event.key.keysym.sym;
+                switch (sym) {
+                case SDLK_w:
+                    moveForward = isKeyDown;
+                    break;
+                case SDLK_s:
+                    moveBackward = isKeyDown;
+                    break;
+                case SDLK_a:
+                    moveLeft = isKeyDown;
+                    break;
+                case SDLK_d:
+                    moveRight = isKeyDown;
+                    break;
+                default:
+                    break;
+                }
             }
-            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F2) {
-                renderer.toggleBackfaceCulling();
-                std::cout << "Back-face culling: "
-                          << (renderer.backfaceCullingEnabled() ? "ON" : "OFF")
-                          << " (press F2 to toggle)" << '\n';
+
+            // 作用：功能键使用 KEYDOWN 的边沿触发（repeat==0），避免连续触发。
+            // 用法：单击一次 F1/F2/F3/ESC，只会触发一次状态切换或退出。
+            if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+                switch (event.key.keysym.sym) {
+                case SDLK_ESCAPE:
+                    running = false;
+                    break;
+                case SDLK_F1:
+                    renderer.toggleWireframeOverlay();
+                    std::cout << "Wireframe overlay: "
+                              << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
+                              << " (press F1 to toggle)" << '\n';
+                    break;
+                case SDLK_F2:
+                    renderer.toggleBackfaceCulling();
+                    std::cout << "Back-face culling: "
+                              << (renderer.backfaceCullingEnabled() ? "ON" : "OFF")
+                              << " (press F2 to toggle)" << '\n';
+                    break;
+                case SDLK_F3:
+                    renderer.setMsaaSampleCount(NextMsaaSampleCount(renderer.msaaSampleCount()));
+                    std::cout << "MSAA samples: "
+                              << renderer.msaaSampleCount()
+                              << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+                    break;
+                default:
+                    break;
+                }
             }
-            if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_F3) {
-                renderer.setMsaaSampleCount(NextMsaaSampleCount(renderer.msaaSampleCount()));
-                std::cout << "MSAA samples: "
-                          << renderer.msaaSampleCount()
-                          << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+
+            // 作用：窗口焦点切换时同步鼠标捕获状态，并重置移动状态。
+            // 用法：失焦时释放鼠标，聚焦时恢复相对模式，避免输入卡键与鼠标漂移。
+            if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    moveForward = false;
+                    moveBackward = false;
+                    moveLeft = false;
+                    moveRight = false;
+
+                    if (mouseCaptureEnabled) {
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                        SDL_SetWindowGrab(window, SDL_FALSE);
+                        SDL_ShowCursor(SDL_ENABLE);
+                    }
+                }
+
+                if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                    if (mouseCaptureEnabled) {
+                        if (SDL_SetRelativeMouseMode(SDL_TRUE) == 0) {
+                            SDL_SetWindowGrab(window, SDL_TRUE);
+                            SDL_ShowCursor(SDL_DISABLE);
+                        }
+                    }
+                }
             }
         }
+
+        if (!running) {
+            break;
+        }
+
+        if (scene.camera) {
+            MoveCameraWithInput(
+                *scene.camera,
+                moveForward,
+                moveBackward,
+                moveLeft,
+                moveRight,
+                deltaTime);
+        }
+
+        scene.RotateObjects(deltaTime);
+
         renderer.clear({ 0, 0, 0, 255 });
         renderer.DrawScene(scene);
 
@@ -262,13 +477,8 @@ int main(int argc, char* argv[])
         SDL_RenderPresent(presentRenderer);
 
         ++fpsFrameCount;
-        const Uint64 nowCounter = SDL_GetPerformanceCounter();
-        {
-            const float deltaTime = static_cast<float>(nowCounter - lastFrameCounter) / static_cast<float>(perfFrequency);
-            lastFrameCounter = nowCounter;
-            scene.RotateObjects(deltaTime);
-        }
-        const double elapsedSeconds = static_cast<double>(nowCounter - fpsWindowStartCounter) / static_cast<double>(perfFrequency);
+        const Uint64 fpsCounter = SDL_GetPerformanceCounter();
+        const double elapsedSeconds = static_cast<double>(fpsCounter - fpsWindowStartCounter) / static_cast<double>(perfFrequency);
         if (elapsedSeconds >= 0.5) {
             const double fps = static_cast<double>(fpsFrameCount) / elapsedSeconds;
             char title[128];
@@ -276,7 +486,7 @@ int main(int argc, char* argv[])
             SDL_SetWindowTitle(window, title);
 
             fpsFrameCount = 0;
-            fpsWindowStartCounter = nowCounter;
+            fpsWindowStartCounter = fpsCounter;
         }
     }
 

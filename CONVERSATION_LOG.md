@@ -202,4 +202,82 @@
 - Experience.md
 - CONVERSATION_LOG.md
 
+## 2026-04-06 会话 015
+
+### 实现功能
+
+- 实现 FPS 相机 WASD 移动：将前向向量投影到水平面，保证移动不受相机俯仰影响，符合第一人称地面平移习惯。
+- 在主循环每帧更新中接入 `SDL_GetKeyboardState`，使 W/A/S/D 按住即可持续移动。
+- 按速度与帧间隔计算位移（`speed * deltaTime`），保证不同帧率下移动手感一致。
+- 完成 Debug 构建验证，工程可编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-06 会话 016
+
+### 实现功能
+
+- 修复输入冲突回归：将键盘输入统一为每帧 `SDL_PumpEvents + SDL_GetKeyboardState` 链路。
+- 将 `F1/F2/F3/ESC` 从 `SDL_KEYDOWN` 事件触发改为边沿检测，避免在部分环境下出现按键无响应。
+- 保留 `SDL_PollEvent` 仅处理系统窗口事件（如关闭窗口），使输入职责更清晰。
+- 保持 WASD 持续状态移动并完成 Debug 构建验证，编译通过。
+- 按约束将本次错误原因与修复方案写入 `Experience.md`。
+
+### 修改文件
+
+- src/main.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-06 会话 017
+
+### 实现功能
+
+- 修复键盘输入彻底无响应问题：移除 `scancode` 依赖，全面改用虚拟按键映射 `sym`。
+- 在特定运行环境（部分中文输入法、远控环境）下，SDL 的物理扫描码 `scancode` 无法正常响应，导致之前的改动即使统一了链路依旧失效。
+- 将 `SDL_SCANCODE_W` 与 `SDL_SCANCODE_F1` 等硬绑定全盘替换为 `SDLK_w` 与 `SDLK_F1` 等逻辑键位，恢复输入功能。
+- 完成 Debug/Release 构建验证。
+
+### 修改文件
+
+- src/main.cpp
+- CONVERSATION_LOG.md
+- Experience.md
+
+## 2026-04-06 会话 018
+
+### 实现功能
+
+- 新增 FPS 相机俯仰角与水平转向控制：在主循环接入 `SDL_MOUSEMOTION`，使用鼠标相对位移驱动 `yaw/pitch`。
+- 新增俯仰角限制：将 pitch 约束在 `[-89°, +89°]`，防止抬头/低头过界引发翻转。
+- 新增相机角度初始化：从当前相机朝向反解初始 yaw/pitch，保证开启鼠标视角时画面连续。
+- 新增窗口焦点联动：失焦时释放鼠标并清空 WASD 状态，重新聚焦时自动恢复相对鼠标模式。
+- 完成 Debug/Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-06 会话 019
+
+### 实现功能
+
+- 修复“相机水平转身 180 度后仍看到身后模型且翻转”的渲染错误。
+- 在 `SoftwareRenderer` 投影入口新增裁剪空间保守拒绝：
+	- 任一顶点 `clip.w <= epsilon` 直接拒绝。
+	- 若三顶点同时落在任一裁剪平面外（`x/y/z` 相对 `±w`），整三角形拒绝。
+- 将齐次除法严格放在裁剪检查之后，避免后方几何被 `clip/w` 镜像映射到前方。
+- 完成 Debug/Release 双构建验证，编译通过。
+- 按要求将本次错误根因与修复策略写入 `Experience.md`。
+
+### 修改文件
+
+- src/software_renderer.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
 

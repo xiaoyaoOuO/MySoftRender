@@ -115,13 +115,38 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
 
     auto projectLocalTriangleToScreen = [&](const glm::mat4& mvp,
                                             std::array<Vertex, 3>& vertices) {
-        glm::vec4 ndcVertices[3];
+        // 作用：在齐次除法前做保守裁剪拒绝，避免相机后方几何被镜像到屏幕前方。
+        // 用法：先在裁剪空间检查 w 与六个裁剪平面，任一拒绝条件命中则直接丢弃该三角形。
+        glm::vec4 clipVertices[3];
         for (int i = 0; i < 3; ++i) {
-            const glm::vec4 clipVertex = mvp * glm::vec4(vertices[i].position, 1.0f);
-            if (std::abs(clipVertex.w) <= 1e-6f) {
+            clipVertices[i] = mvp * glm::vec4(vertices[i].position, 1.0f);
+        }
+
+        constexpr float kClipEpsilon = 1e-6f;
+        for (int i = 0; i < 3; ++i) {
+            if (clipVertices[i].w <= kClipEpsilon) {
                 return false;
             }
-            ndcVertices[i] = clipVertex / clipVertex.w;
+        }
+
+        const auto allOutside = [&](auto planeOut) {
+            return planeOut(clipVertices[0])
+                && planeOut(clipVertices[1])
+                && planeOut(clipVertices[2]);
+        };
+
+        if (allOutside([](const glm::vec4& v) { return v.x < -v.w; })
+            || allOutside([](const glm::vec4& v) { return v.x > v.w; })
+            || allOutside([](const glm::vec4& v) { return v.y < -v.w; })
+            || allOutside([](const glm::vec4& v) { return v.y > v.w; })
+            || allOutside([](const glm::vec4& v) { return v.z < -v.w; })
+            || allOutside([](const glm::vec4& v) { return v.z > v.w; })) {
+            return false;
+        }
+
+        glm::vec4 ndcVertices[3];
+        for (int i = 0; i < 3; ++i) {
+            ndcVertices[i] = clipVertices[i] / clipVertices[i].w;
         }
 
         for (int i = 0; i < 3; ++i) {
