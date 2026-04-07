@@ -46,16 +46,20 @@ public:
     void setWireframeOverlayEnabled(bool enabled);
     void toggleWireframeOverlay();
     void DrawScene(const Scene& scene);
+    void SetFragmentShader(std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> shader) {
+        fragmentShader_ = std::move(shader);
+    }
+    static std::uint32_t packColor(const Color& color);
 
 private:
     int width_;
     int height_;
     std::vector<std::uint32_t> colorBuffer_;
 
+
     Rasterizer rasterizer_;
-    std::function<void(std::vector<std::uint32_t>&, const Fragment&)> fragmentShader_;
+    std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> fragmentShader_;
 private:
-    static std::uint32_t packColor(const Color& color);
     void putPixel(int x, int y, const Color& color);
     void putPixel(size_t index, const Color& color);
 };

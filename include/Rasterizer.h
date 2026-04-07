@@ -30,6 +30,7 @@ struct Fragment
     float depth; // 深度值
     Color color; // 颜色
     glm::vec3 normal; // 法线向量
+    glm::vec3 worldPos; // 世界空间位置
 };
 
 struct Edge {
@@ -131,9 +132,13 @@ public:
     // 作用：清除帧缓冲和所有相关的状态（如 ZBuffer，片段缓存等）
     void Clear();
 
-    // 作用：将包含位置、颜色、法线、UV 坐标的 Vertex 结构体进行光栅化
-    // 用法：可选择是否传入 texture 纹理指针，如果为空则走纯色填充逻辑
-    void Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const Texture2D* texture = nullptr);
+    // 作用：将三角形执行光栅化并生成可供片段着色器使用的片段数据。
+    // 用法：除屏幕空间 vertices 外，可选传入世界空间位置/法线用于光照计算；texture 为空时走纯色路径。
+    void Rasterize_Triangle(
+        const std::array<Vertex, 3>& vertices,
+        const Texture2D* texture = nullptr,
+        const std::array<glm::vec3, 3>* worldPositions = nullptr,
+        const std::array<glm::vec3, 3>* worldNormals = nullptr);
 
 private:
     static constexpr int kMsaaSampleCount = 4;

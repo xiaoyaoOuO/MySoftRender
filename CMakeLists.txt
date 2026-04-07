@@ -100,6 +100,7 @@ target_link_libraries(imgui_sdl PUBLIC SDL2::SDL2)
 
 add_executable(mySoftRender
     src/main.cpp
+    src/Light.cpp
     src/ObjLoader.cpp
     src/Object.cpp
     src/Sphere.cpp

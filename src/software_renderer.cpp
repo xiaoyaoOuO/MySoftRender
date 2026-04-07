@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include <glm/common.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 
 
 SoftwareRenderer::SoftwareRenderer(int width, int height)
@@ -158,20 +159,47 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         return true;
     };
 
-    auto rasterizeLocalTriangle = [&](const glm::mat4& mvp,
+    auto rasterizeLocalTriangle = [&](const glm::mat4& model,
+                                      const glm::mat4& mvp,
                                       const std::array<Vertex, 3>& localVertices,
                                       const Texture2D* texture = nullptr) {
+        std::array<glm::vec3, 3> worldPositions;
+        std::array<glm::vec3, 3> worldNormals;
+
+        const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
+        const glm::vec3 fallbackLocalNormal = VectorMath::getNormal(
+            localVertices[0].position,
+            localVertices[1].position,
+            localVertices[2].position);
+
+        for (int i = 0; i < 3; ++i) {
+            const glm::vec4 worldPos4 = model * glm::vec4(localVertices[i].position, 1.0f);
+            worldPositions[i] = glm::vec3(worldPos4);
+
+            glm::vec3 localNormal = localVertices[i].normal;
+            if (glm::dot(localNormal, localNormal) <= 1e-12f) {
+                localNormal = fallbackLocalNormal;
+            }
+
+            glm::vec3 transformedNormal = normalMatrix * localNormal;
+            if (glm::dot(transformedNormal, transformedNormal) <= 1e-12f) {
+                transformedNormal = fallbackLocalNormal;
+            }
+            worldNormals[i] = glm::normalize(transformedNormal);
+        }
+
         std::array<Vertex, 3> screenVertices = localVertices;
         if (!projectLocalTriangleToScreen(mvp, screenVertices)) {
             return;
         }
 
-        rasterizer_.Rasterize_Triangle(screenVertices, texture);
+        rasterizer_.Rasterize_Triangle(screenVertices, texture, &worldPositions, &worldNormals);
     };
 
     for(const auto& obj : scene.objects)
     {
-        const glm::mat4 mvp = viewProjection * obj->modelMatrix();
+        const glm::mat4 model = obj->modelMatrix();
+        const glm::mat4 mvp = viewProjection * model;
         const Texture2D* objectTexture = obj->hasTexture() ? obj->texture().get() : nullptr;
 
         if (const MeshObject* meshObject = dynamic_cast<MeshObject*>(obj.get())) {
@@ -194,7 +222,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 if (!faceValid) {
                     continue;
                 }
-                rasterizeLocalTriangle(mvp, localVertices, objectTexture);
+                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
             }
         } else if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
             std::array<Vertex, 3> localVertices;
@@ -202,8 +230,9 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
                 localVertices[i].color = tri->getColors()[i];
                 localVertices[i].texCoord = tri->getTexCoords()[i];
+                localVertices[i].normal = tri->getNormal();
             }
-            rasterizeLocalTriangle(mvp, localVertices, objectTexture);
+            rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
         }else if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
             const auto& sphereVertices = sphere->vertices();
             const auto& sphereIndices = sphere->indices();
@@ -217,8 +246,15 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                     localVertices[i].position = glm::vec3(sphereVertices[idx]);
                     localVertices[i].color = sphereColors[idx];
                     localVertices[i].texCoord = sphereUVs[idx];
+
+                    const glm::vec3 normal = glm::vec3(sphereVertices[idx]);
+                    if (glm::dot(normal, normal) <= 1e-12f) {
+                        localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else {
+                        localVertices[i].normal = glm::normalize(normal);
+                    }
                 }
-                rasterizeLocalTriangle(mvp, localVertices, objectTexture);
+                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
             }
         }else if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
             const auto& cubeVertices = cube->vertices();
@@ -230,8 +266,15 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 for (int i = 0; i < 3; ++i) {
                     localVertices[i].position = cubeVertices[face[i]];
                     localVertices[i].color = cubeColor;
+
+                    const glm::vec3 normal = cubeVertices[face[i]];
+                    if (glm::dot(normal, normal) <= 1e-12f) {
+                        localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else {
+                        localVertices[i].normal = glm::normalize(normal);
+                    }
                 }
-                rasterizeLocalTriangle(mvp, localVertices);
+                rasterizeLocalTriangle(model, mvp, localVertices);
             }
         }
     }
@@ -240,7 +283,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     for(const auto& frag : rasterizer_.fragments())
     {
         if (fragmentShader_) {
-            fragmentShader_(colorBuffer_, frag);
+            fragmentShader_(colorBuffer_, frag, scene);
         } else {
             putPixel(frag.bufferIndex, frag.color);
         }

@@ -148,6 +148,7 @@ void RasterizeLine(
         frag.depth = depth;
         frag.color = kEdgeColor;
         frag.normal = normal;
+        frag.worldPos = glm::vec3(0.0f);
         fragments.push_back(frag);
     };
 
@@ -171,6 +172,8 @@ void RasterizeLine(
 template <typename ShadePixelFunc>
 void RasterizeTriangleMSAA(
     const std::array<glm::vec3, 3>& vertexs,
+    const std::array<glm::vec3, 3>* worldPositions,
+    const std::array<glm::vec3, 3>* worldNormals,
     int width,
     int height,
     std::vector<float>& zBuffer,
@@ -208,7 +211,11 @@ void RasterizeTriangleMSAA(
 
     const bool isAreaPositive = area > 0.0f;
     const float invArea = 1.0f / area;
-    const glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
+
+    glm::vec3 triangleNormal = VectorMath::getNormal(vertexs[0], vertexs[1], vertexs[2]);
+    if (worldPositions != nullptr) {
+        triangleNormal = VectorMath::getNormal((*worldPositions)[0], (*worldPositions)[1], (*worldPositions)[2]);
+    }
 
     const float z0 = vertexs[0].z;
     const float z1 = vertexs[1].z;
@@ -295,7 +302,30 @@ void RasterizeTriangleMSAA(
             frag.bufferIndex = pixelIndex;
             frag.depth = resolvedDepth;
             frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer, activeSampleCount));
-            frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer, sampleNormalBuffer, activeSampleCount);
+
+            // 作用：将当前像素重心坐标对应的世界空间位置与法线写入 Fragment，供光照在世界坐标系计算。
+            // 用法：若调用方提供了 worldPositions/worldNormals，则按重心插值；否则退回到已有法线解析路径。
+            if (worldPositions != nullptr) {
+                frag.worldPos = (*worldPositions)[0] * shadeW0
+                    + (*worldPositions)[1] * shadeW1
+                    + (*worldPositions)[2] * shadeW2;
+            } else {
+                frag.worldPos = glm::vec3(0.0f);
+            }
+
+            if (worldNormals != nullptr) {
+                glm::vec3 interpolatedNormal = (*worldNormals)[0] * shadeW0
+                    + (*worldNormals)[1] * shadeW1
+                    + (*worldNormals)[2] * shadeW2;
+                const float len2 = glm::dot(interpolatedNormal, interpolatedNormal);
+                if (len2 > 1e-12f) {
+                    frag.normal = glm::normalize(interpolatedNormal);
+                } else {
+                    frag.normal = triangleNormal;
+                }
+            } else {
+                frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer, sampleNormalBuffer, activeSampleCount);
+            }
 
             const int fragmentIndex = fragmentLut[pixelIndex];
             if (fragmentIndex >= 0) {
@@ -345,7 +375,11 @@ void Rasterizer::Clear()
     fragments_.clear();
 }
 
-void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const Texture2D* texture)
+void Rasterizer::Rasterize_Triangle(
+    const std::array<Vertex, 3>& vertices,
+    const Texture2D* texture,
+    const std::array<glm::vec3, 3>* worldPositions,
+    const std::array<glm::vec3, 3>* worldNormals)
 {
     // 屏幕空间采用 y 轴向下约定时，约定顺时针为正面。
     const Vec2 s0 = {vertices[0].position.x, vertices[0].position.y};
@@ -405,6 +439,8 @@ void Rasterizer::Rasterize_Triangle(const std::array<Vertex, 3>& vertices, const
     // 在 Lambda 回调中，通过计算得到的重心坐标(w0, w1, w2)插值计算每个被覆盖像素的颜色。
     RasterizeTriangleMSAA(
         screenPositions,
+        worldPositions,
+        worldNormals,
         width_,
         height_,
         zBuffer_,

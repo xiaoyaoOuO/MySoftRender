@@ -280,4 +280,89 @@
 - Experience.md
 - CONVERSATION_LOG.md
 
+## 2026-04-07 会话 020
+
+### 实现功能
+
+- 为 `Texture2D` 的各个函数补充中文注释，覆盖接口声明与实现函数。
+- 注释内容统一包含“作用/用法”，便于快速理解纹理加载、棋盘纹理生成、texel 读取与双线性采样流程。
+- 完成静态错误检查，确认注释改动未引入编译问题。
+
+### 修改文件
+
+- include/Texture.h
+- src/Texture.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-07 会话 021
+
+### 实现功能
+
+- 基于当前项目真实进度，清理并重写 `TODO.md` 结构，按“已完成基线 / P0 / P1 / P2 / 工程化”分层。
+- 修正过期项状态（例如纹理管线、FPS 相机、保守裁剪拒绝等已完成能力）。
+- 新增独立的“光源系统（新增）”TODO，明确目标、拆分步骤与验收标准。
+- 保留里程碑建议并更新为当前阶段可执行路径。
+
+### 修改文件
+
+- TODO.md
+- CONVERSATION_LOG.md
+
+## 2026-04-07 会话 022
+
+### 实现功能
+
+- 修复 `main.cpp` 中 `renderer.SetFragmentShader(Bling_Phong_Shader);` 的类型不匹配报错。
+- 将 `Bling_Phong_Shader` 的参数从 `Fragment&` 改为 `const Fragment&`，与渲染器接口签名一致。
+- 继续排查并修复链接问题：将 `src/Light.cpp` 加入 CMake 目标，并修正其头文件引用路径。
+- 完成 Release 构建验证，确认工程可编译通过。
+- 按约束将本次错误根因与解决方案写入 `Experience.md`。
+
+### 修改文件
+
+- src/main.cpp
+- src/Light.cpp
+- CMakeLists.txt
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-07 会话 023
+
+### 实现功能
+
+- 将 Blinn-Phong 光照计算从屏幕空间改为世界空间：`lightDir/viewDir` 改为基于 `payload.worldPos` 与相机世界位置计算。
+- 在 `Fragment` 中新增 `worldPos` 字段，并在光栅化阶段按重心坐标插值世界位置与世界法线。
+- 在 `SoftwareRenderer` 的三角形提交流程中补齐世界空间属性传递：
+	- 由 `modelMatrix` 生成每顶点世界坐标。
+	- 使用法线矩阵（逆转置）将局部法线变换到世界空间。
+- 修复 shader 回调触发条件：移除无效的 `weak_ptr scene_` 依赖，改为直接使用 `DrawScene` 传入的 `scene`。
+- 修复场景光源未生效问题：创建点光源后加入 `scene.lights` 列表。
+- 完成 Debug/Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- include/Rasterizer.h
+- src/Rasterizer.cpp
+- include/software_renderer.h
+- src/software_renderer.cpp
+- src/main.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-07 会话 024
+
+### 实现功能
+
+- 修复“运行时看不出 Blinn-Phong 光照效果”的核心问题：材质、光照参数与着色器合成方式同步校正。
+- 在场景创建阶段将球体基础颜色改为白色并绑定球体纹理，避免黑色反照率导致受光层次被吞没。
+- 重写 `Bling_Phong_Shader` 合成逻辑：由“直接叠加 albedo”改为“`albedo * (ambient + diffuse) + specular`”的标准形式。
+- 点光衰减由简单 `1/r^2` 改为更平滑的 `1/(1 + 0.14d + 0.07d^2)`，并调整光源位置与强度，提升默认场景下的可见高光与明暗对比。
+- 调低场景环境光强度，避免环境光过亮抹平漫反射和高光细节。
+- 完成 Release 构建验证，工程编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
 

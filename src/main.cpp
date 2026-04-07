@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 namespace Window{
     constexpr int kWindowWidth = 960;
@@ -191,36 +192,147 @@ void CreateScene(
 {
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
+    // 作用：降低环境光，给漫反射/高光留出可见对比空间。
+    // 用法：当需要更明显观察 Blinn-Phong 光照层次时，可将环境光强度保持在较低水平。
+    scene.ambientLightColor = glm::vec3(1.0f);
+    scene.ambientLightIntensity = 0.08f;
     // scene.objects.emplace_back(std::make_unique<Triangle>());
     
     // auto triangle = std::make_unique<Triangle>();
     // triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
     // scene.objects.emplace_back(std::move(triangle));
 
-    // auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
-    // sphere->setPosition(glm::vec3(0.8f, 0.0f, -1.2f));
+    // 作用：将球体基础反照率设为白色，并绑定纹理，避免“黑色材质看不出受光层次”。
+    // 用法：如果只想看纯色受光，可保留白色并取消纹理绑定。
+    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.1f, 0.1f, 0.1f));
     // sphere->setTexture(sphereTexture);
-    // scene.objects.emplace_back(std::move(sphere));
+    scene.objects.emplace_back(std::move(sphere));
 
     // auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
     // cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
     // scene.objects.emplace_back(std::move(cube));
 
-    ObjMeshData MaryMesh;
-    const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
-    if (!ok || MaryMesh.empty()) {
-        std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
+
+    //插入Mary模型
+    // ObjMeshData MaryMesh;
+    // const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
+    // if (!ok || MaryMesh.empty()) {
+    //     std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
+    //     return;
+    // }
+
+    // (void)sphereTexture;
+
+    // auto maryObject = std::make_unique<MeshObject>(MaryMesh);
+    // maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    // maryObject->setTexture(maryTexture);
+    // scene.objects.emplace_back(std::move(maryObject));
+
+    //添加一个点光源
+    auto light = std::make_unique<Light>(
+        glm::vec3(1.8f, 1.5f, 2.2f), // position
+        glm::vec3(1.0f, 1.0f, 1.0f), // color
+        glm::vec3(0.0f, -1.0f, -1.0f), // direction (not used for point light)
+        3.5f, // intensity
+        Light::LightType::Point // type
+    );
+
+    // 作用：将创建好的光源加入场景，供片段着色阶段进行光照计算。
+    // 用法：当前先加入一个点光源，后续可扩展为多光源列表。
+    scene.lights.emplace_back(std::move(light));
+
+}
+
+std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)>Bling_Phong_Shader = [](std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene){
+    // 作用：在世界坐标下执行可见性更强的 Blinn-Phong 光照（环境+漫反射+高光）。
+    // 用法：输入 payload.worldPos / payload.normal，按场景 lights 累加受光贡献。
+    if (!scene.camera) {
+        colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(payload.color);
         return;
     }
 
-    (void)sphereTexture;
+    auto normalizeColor = [](const glm::vec3& color) {
+        const float maxChannel = std::max(color.r, std::max(color.g, color.b));
+        if (maxChannel > 1.0f) {
+            return color / 255.0f;
+        }
+        return color;
+    };
 
-    auto maryObject = std::make_unique<MeshObject>(MaryMesh);
-    maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
-    maryObject->setTexture(maryTexture);
-    scene.objects.emplace_back(std::move(maryObject));
+    const glm::vec3 albedo = glm::vec3(payload.color.r, payload.color.g, payload.color.b) / 255.0f;
+    const glm::vec3 ambientColor = normalizeColor(scene.ambientLightColor);
 
-}
+    glm::vec3 normal = payload.normal;
+    if (glm::dot(normal, normal) <= 1e-12f) {
+        normal = glm::vec3(0.0f, 1.0f, 0.0f);
+    } else {
+        normal = glm::normalize(normal);
+    }
+
+    glm::vec3 viewDir = scene.camera->position() - payload.worldPos;
+    if (glm::dot(viewDir, viewDir) <= 1e-12f) {
+        viewDir = glm::vec3(0.0f, 0.0f, 1.0f);
+    } else {
+        viewDir = glm::normalize(viewDir);
+    }
+
+    glm::vec3 diffuseLighting = scene.ambientLightIntensity * ambientColor;
+    glm::vec3 specularLighting(0.0f);
+
+    constexpr float kShininess = 64.0f;
+    constexpr float kSpecularStrength = 0.35f;
+
+    for (const auto& lightPtr : scene.lights) {
+        if (!lightPtr) {
+            continue;
+        }
+
+        const Light& light = *lightPtr;
+        const glm::vec3 lightColor = normalizeColor(light.color());
+
+        glm::vec3 lightDir(0.0f, 1.0f, 0.0f);
+        float attenuation = 1.0f;
+
+        if (light.type() == Light::LightType::Directional) {
+            glm::vec3 dir = light.direction();
+            if (glm::dot(dir, dir) > 1e-12f) {
+                lightDir = -glm::normalize(dir);
+            }
+        } else {
+            const glm::vec3 toLight = light.position() - payload.worldPos;
+            const float distanceToLight = std::max(glm::length(toLight), 1e-4f);
+            lightDir = toLight / distanceToLight;
+
+            // 作用：使用更平滑的点光衰减，避免 1/r^2 在中距离下光照过暗看不出层次。
+            // 用法：可按场景尺度调整常数项，当前参数适配本项目默认单位。
+            attenuation = 1.0f / (1.0f + 0.14f * distanceToLight + 0.07f * distanceToLight * distanceToLight);
+        }
+
+        const float ndotl = std::max(glm::dot(normal, lightDir), 0.0f);
+        if (ndotl <= 0.0f) {
+            continue;
+        }
+
+        const glm::vec3 halfDir = glm::normalize(lightDir + viewDir);
+        const float specAngle = std::max(glm::dot(normal, halfDir), 0.0f);
+        const float specularTerm = std::pow(specAngle, kShininess);
+
+        diffuseLighting += ndotl * light.intensity() * attenuation * lightColor;
+        specularLighting += kSpecularStrength * specularTerm * light.intensity() * attenuation * lightColor;
+    }
+
+    // 作用：按标准材质模型组合颜色，漫反射受 albedo 调制，高光独立叠加。
+    // 用法：相比“直接加 albedo”能更明显体现光照方向变化。
+    glm::vec3 finalLinear = albedo * diffuseLighting + specularLighting;
+    finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
+
+    Color finalColor;
+    finalColor.r = static_cast<std::uint8_t>(finalLinear.r * 255.0f);
+    finalColor.g = static_cast<std::uint8_t>(finalLinear.g * 255.0f);
+    finalColor.b = static_cast<std::uint8_t>(finalLinear.b * 255.0f);
+    finalColor.a = 255;
+    colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(finalColor);
+};
 
 int main(int argc, char* argv[])
 {
@@ -256,6 +368,7 @@ int main(int argc, char* argv[])
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     renderer.setBackfaceCullingEnabled(true);
     renderer.setMsaaSampleCount(1);
+    renderer.SetFragmentShader(Bling_Phong_Shader);
     std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
     std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
     std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
