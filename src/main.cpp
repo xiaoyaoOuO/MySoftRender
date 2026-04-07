@@ -75,6 +75,11 @@ std::string ResolveMaryObjPath(const char* argv0)
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "mary" / "mary.obj");
 }
 
+std::string ResolveFloorPath(const char* argv0)
+{
+    return ResolveAssetPath(argv0, std::filesystem::path("assets") / "floor" / "floor.obj");
+}
+
 // 作用：按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。
 // 用法：每次按键触发时传入当前档位，返回下一个可用档位。
 int NextMsaaSampleCount(int currentSampleCount)
@@ -188,7 +193,8 @@ void CreateScene(
     Scene& scene,
     const std::shared_ptr<Texture2D>& sphereTexture,
     const std::shared_ptr<Texture2D>& maryTexture,
-    const std::string& maryObjPath)
+    const std::string& maryObjPath,
+    const std::string& floorObjPath)
 {
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
@@ -204,9 +210,9 @@ void CreateScene(
 
     // 作用：将球体基础反照率设为白色，并绑定纹理，避免“黑色材质看不出受光层次”。
     // 用法：如果只想看纯色受光，可保留白色并取消纹理绑定。
-    auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.1f, 0.1f, 0.1f));
+    // auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.1f, 0.1f, 0.1f));
     // sphere->setTexture(sphereTexture);
-    scene.objects.emplace_back(std::move(sphere));
+    // scene.objects.emplace_back(std::move(sphere));
 
     // auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
     // cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
@@ -214,19 +220,33 @@ void CreateScene(
 
 
     //插入Mary模型
-    // ObjMeshData MaryMesh;
-    // const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
-    // if (!ok || MaryMesh.empty()) {
-    //     std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
-    //     return;
-    // }
+    ObjMeshData MaryMesh;
+    const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
+    if (!ok || MaryMesh.empty()) {
+        std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
+        return;
+    }
 
-    // (void)sphereTexture;
+    (void)sphereTexture;
 
-    // auto maryObject = std::make_unique<MeshObject>(MaryMesh);
-    // maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
-    // maryObject->setTexture(maryTexture);
-    // scene.objects.emplace_back(std::move(maryObject));
+    auto maryObject = std::make_unique<MeshObject>(MaryMesh);
+    maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    maryObject->setTexture(maryTexture);
+    scene.objects.emplace_back(std::move(maryObject));
+
+    ObjMeshData planeMesh;
+    const bool ok2 = ObjLoader::LoadFromFile(floorObjPath, planeMesh);
+    if (!ok2 || planeMesh.empty()) {
+        std::cerr << "Failed to load floor.obj: " << floorObjPath << std::endl;
+        return;
+    }
+
+    auto floorObject = std::make_unique<MeshObject>(planeMesh);
+    // 作用：将 floor 缩放并前移到相机前方，避免超大平面跨过相机导致整三角被保守裁剪拒绝。
+    // 用法：当前渲染器未做真实近平面裁剪（仅做 accept/reject）时，需保证地面网格顶点整体位于相机前方。
+    floorObject->setScale(glm::vec3(0.08f, 1.0f, 0.08f));
+    floorObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    scene.objects.emplace_back(std::move(floorObject));
 
     //添加一个点光源
     auto light = std::make_unique<Light>(
@@ -340,6 +360,7 @@ int main(int argc, char* argv[])
     const std::string sphereTexturePath = ResolveSphereTexturePath(argv0);
     const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
     const std::string maryObjPath = ResolveMaryObjPath(argv0);
+    const std::string floorObjPath = ResolveFloorPath(argv0);
 
     auto sphereTexture = std::make_shared<Texture2D>();
     if (!sphereTexture->loadFromFile(sphereTexturePath)) {
@@ -363,7 +384,7 @@ int main(int argc, char* argv[])
     }
 
     Scene scene;
-    CreateScene(scene, sphereTexture, maryTexture, maryObjPath);
+    CreateScene(scene, sphereTexture, maryTexture, maryObjPath, floorObjPath);
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     renderer.setBackfaceCullingEnabled(true);

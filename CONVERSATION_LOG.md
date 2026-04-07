@@ -232,6 +232,21 @@
 - Experience.md
 - CONVERSATION_LOG.md
 
+## 2026-04-07 会话 025
+
+### 实现功能
+
+- 修复“已加载 floor 但场景中不可见”的问题。
+- 根因定位：`floor.obj` 为超大平面（约 56x56），当前渲染器在投影前采用保守 reject（任一顶点在相机后方即丢弃整三角），导致 floor 的两个三角形都被整块剔除。
+- 解决方式：在 `CreateScene` 中对 floor 增加缩放并前移，使其顶点整体落在相机前方，避免触发整三角拒绝。
+- 完成 Release 构建验证，工程编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
 ## 2026-04-06 会话 017
 
 ### 实现功能
