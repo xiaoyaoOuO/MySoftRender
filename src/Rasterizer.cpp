@@ -1,5 +1,6 @@
 #include "Rasterizer.h"
 #include "Texture.h"
+#include "Scene.h"
 
 namespace {
 // 作用：定义采样缓冲的最大展开采样数（用于固定步长索引）。
@@ -107,6 +108,27 @@ glm::vec3 ResolvePixelNormal(
     return glm::vec3(0.0f, 0.0f, 1.0f);
 }
 
+// 作用：将屏幕空间重心坐标修正为透视正确重心坐标。
+// 用法：传入线性重心坐标和每个顶点 invW，返回可用于 worldPos/UV/法线插值的修正权重。
+std::array<float, 3> PerspectiveCorrectWeights(
+    float w0,
+    float w1,
+    float w2,
+    const std::array<float, 3>& vertexInvW)
+{
+    const float p0 = w0 * vertexInvW[0];
+    const float p1 = w1 * vertexInvW[1];
+    const float p2 = w2 * vertexInvW[2];
+    const float denom = p0 + p1 + p2;
+
+    if (std::abs(denom) <= 1e-8f) {
+        return {w0, w1, w2};
+    }
+
+    const float invDenom = 1.0f / denom;
+    return {p0 * invDenom, p1 * invDenom, p2 * invDenom};
+}
+
 void RasterizeLine(
     const glm::vec3& v0,
     const glm::vec3& v1,
@@ -172,6 +194,7 @@ void RasterizeLine(
 template <typename ShadePixelFunc>
 void RasterizeTriangleMSAA(
     const std::array<glm::vec3, 3>& vertexs,
+    const std::array<float, 3>& vertexInvW,
     const std::array<glm::vec3, 3>* worldPositions,
     const std::array<glm::vec3, 3>* worldNormals,
     int width,
@@ -277,8 +300,17 @@ void RasterizeTriangleMSAA(
             float shadeW0 = VectorMath::edgeFunction(v1, v2, shadePoint) * invArea;
             float shadeW1 = VectorMath::edgeFunction(v2, v0, shadePoint) * invArea;
             float shadeW2 = VectorMath::edgeFunction(v0, v1, shadePoint) * invArea;
+            const std::array<float, 3> correctedWeights = PerspectiveCorrectWeights(
+                shadeW0,
+                shadeW1,
+                shadeW2,
+                vertexInvW);
+            const float correctedW0 = correctedWeights[0];
+            const float correctedW1 = correctedWeights[1];
+            const float correctedW2 = correctedWeights[2];
+
             const glm::vec3 pixelShadedColor = glm::clamp(
-                shadePixel(shadeW0, shadeW1, shadeW2),
+                shadePixel(correctedW0, correctedW1, correctedW2),
                 glm::vec3(0.0f),
                 glm::vec3(1.0f));
 
@@ -303,20 +335,61 @@ void RasterizeTriangleMSAA(
             frag.depth = resolvedDepth;
             frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer, activeSampleCount));
 
+            // 作用：根据光源阴影贴图判断当前片段是否被遮挡。
+            // 用法：先做 NDC 与贴图边界检查，再读取深度，避免越界索引导致阴影随机跳变。
+            if (worldPositions != nullptr && Scene::instance) {
+                const Scene& scene = *(Scene::instance);
+                if (scene.shadowSettings.enableShadowMap && !scene.lights.empty()) {
+                    const Light& light = *scene.lights[0];
+                    const int shadowWidth = light.shadowMapWidth();
+                    const int shadowHeight = light.shadowMapHeight();
+                    const std::vector<float>& shadowMap = light.lightViewDepths();
+
+                    if (shadowWidth > 0 && shadowHeight > 0
+                        && shadowMap.size() == static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight)) {
+                        const glm::vec3 worldPos = (*worldPositions)[0] * correctedW0
+                            + (*worldPositions)[1] * correctedW1
+                            + (*worldPositions)[2] * correctedW2;
+
+                        glm::vec4 lightSpacePos = light.lightSpaceMatrix() * glm::vec4(worldPos, 1.0f);
+                        if (std::abs(lightSpacePos.w) > 1e-6f) {
+                            lightSpacePos /= lightSpacePos.w;
+
+                            const bool outsideLightFrustum =
+                                (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
+                                || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
+                                || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
+                            if (!outsideLightFrustum) {
+                                const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowWidth));
+                                const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowHeight));
+
+                                if (lx >= 0 && lx < shadowWidth && ly >= 0 && ly < shadowHeight) {
+                                    const size_t shadowIndex = BufferIndex(lx, ly, shadowWidth);
+                                    const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
+                                    const float blockerDepth = shadowMap[shadowIndex];
+                                    const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
+                                    frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 作用：将当前像素重心坐标对应的世界空间位置与法线写入 Fragment，供光照在世界坐标系计算。
             // 用法：若调用方提供了 worldPositions/worldNormals，则按重心插值；否则退回到已有法线解析路径。
             if (worldPositions != nullptr) {
-                frag.worldPos = (*worldPositions)[0] * shadeW0
-                    + (*worldPositions)[1] * shadeW1
-                    + (*worldPositions)[2] * shadeW2;
+                frag.worldPos = (*worldPositions)[0] * correctedW0
+                    + (*worldPositions)[1] * correctedW1
+                    + (*worldPositions)[2] * correctedW2;
             } else {
                 frag.worldPos = glm::vec3(0.0f);
             }
 
             if (worldNormals != nullptr) {
-                glm::vec3 interpolatedNormal = (*worldNormals)[0] * shadeW0
-                    + (*worldNormals)[1] * shadeW1
-                    + (*worldNormals)[2] * shadeW2;
+                glm::vec3 interpolatedNormal = (*worldNormals)[0] * correctedW0
+                    + (*worldNormals)[1] * correctedW1
+                    + (*worldNormals)[2] * correctedW2;
                 const float len2 = glm::dot(interpolatedNormal, interpolatedNormal);
                 if (len2 > 1e-12f) {
                     frag.normal = glm::normalize(interpolatedNormal);
@@ -410,6 +483,7 @@ void Rasterizer::Rasterize_Triangle(
     }
 
     std::array<glm::vec3, 3> screenPositions = {vertices[0].position, vertices[1].position, vertices[2].position};
+    const std::array<float, 3> vertexInvW = {vertices[0].invW, vertices[1].invW, vertices[2].invW};
 
     // 若传入了有效的纹理对象，则处理 UV 缝隙修复
     std::array<glm::vec2, 3> seamSafeTexCoords = {vertices[0].texCoord, vertices[1].texCoord, vertices[2].texCoord};
@@ -439,6 +513,7 @@ void Rasterizer::Rasterize_Triangle(
     // 在 Lambda 回调中，通过计算得到的重心坐标(w0, w1, w2)插值计算每个被覆盖像素的颜色。
     RasterizeTriangleMSAA(
         screenPositions,
+        vertexInvW,
         worldPositions,
         worldNormals,
         width_,

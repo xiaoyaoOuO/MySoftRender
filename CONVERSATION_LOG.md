@@ -380,4 +380,102 @@
 - Experience.md
 - CONVERSATION_LOG.md
 
+## 2026-04-11 会话 026
+
+### 实现功能
+
+- 开始实现 ShadowMap 主流程：在 `SoftwareRenderer::DrawScene` 中接入双 pass 渲染（方向光深度 pass + 主相机颜色 pass）。
+- 扩展光源与场景阴影配置：
+	- `Light` 新增光空间矩阵缓存与阴影体参数（正交半径、近平面、远平面）。
+	- `Scene` 新增 `ShadowSettings`（开关、分辨率、过滤模式、PCF/PCSS 预留参数）。
+- 片段数据新增阴影可见性：`Fragment` 增加 `shadowVisibility` 字段，并在主着色阶段应用到方向光直接光贡献。
+
+
+### 修改文件
+
+- include/Light.h
+- src/Light.cpp
+- include/Scene.h
+- include/Rasterizer.h
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-11 会话 027
+
+### 实现功能
+
+- 按“先不改太多”的要求，完成 Light 第一个 Pass 的深度写入闭环。
+- 修正原先第一 Pass 与主 Pass 共用 `Rasterizer` 深度缓冲的问题，改为独立阴影深度缓存流程，避免互相污染。
+- 在 `SoftwareRenderer` 内新增第一 Pass 的最小深度光栅逻辑：
+	- 新增目标投影函数 `ProjectTriangleToTarget`，将三角形投影到阴影贴图分辨率。
+	- 新增深度写入函数 `RasterizeShadowDepthTriangle`，仅写最近深度。
+	- 将深度结果写入 `Light` 的 `lightViewDepths` 缓存。
+- 在 `Light` 中新增 `lightViewDepths()` 访问接口，供第一 Pass 写入、后续第二 Pass 读取。
+- 修复一次编译错误：`rasterizeLocalTriangle` 默认参数在声明/定义重复，移除实现处默认值后构建通过。
+- 完成 Debug 构建验证，工程编译通过。
+
+### 修改文件
+
+- include/Light.h
+- src/software_renderer.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-11 会话 028
+
+### 实现功能
+
+- 按需求将 Light 的 depthbuffer 尺寸调整为与软件渲染 colorbuffer 完全一致。
+- 第一 Pass 深度缓存分配从 `shadowMapResolution x shadowMapResolution` 改为 `width_ x height_`。
+- 第一 Pass 的投影与深度光栅写入同步改为使用 `shadowWidth/shadowHeight`，保证索引和边界一致。
+- 完成 Debug 构建验证，工程编译通过。
+
+### 修改文件
+
+- src/software_renderer.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 029
+
+### 实现功能
+
+- 修复阴影随相机移动漂移问题：在投影阶段写入每顶点 `invW`，并在光栅化阶段对 `worldPos/worldNormal/UV` 使用透视校正重心插值。
+- 修复阴影采样不稳定问题：为 ShadowMap 读取补齐 NDC 范围检查、贴图边界检查与尺寸一致性检查，消除越界读取导致的随机阴影形变。
+- 补齐阴影贴图尺寸元数据：在 `Light` 中新增 shadow map 宽高字段，由第一 Pass 写入、第二 Pass 读取，避免采样维度隐式耦合。
+- 修复阴影模型与光照模型不一致：将场景主光源改为方向光，并设置正交阴影范围参数，使当前 2D ShadowMap 路径与光照类型一致。
+- 完成 Debug/Release 双构建验证，工程编译通过。
+- 按约束将本次问题的根因与修复方案写入 `Experience.md`。
+- 处理一次 release 链接占用问题：`mySoftRender.exe` 被运行进程锁定导致 `Permission denied`，终止进程后重建通过。
+
+### 修改文件
+
+- include/ObjLoader.h
+- include/Light.h
+- src/Light.cpp
+- src/software_renderer.cpp
+- src/Rasterizer.cpp
+- src/main.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 030
+
+### 实现功能
+
+- 按需求将主光源调整到人物前上方，并重设方向向量，使人物可在地面形成更完整、稳定的投影轮廓。
+- 新增独立 ImGui 调试模块 `DebugUI`，将 UI 生命周期与渲染调用从 `main.cpp` 中解耦。
+- 在调试面板中接入 `scene.shadowSettings.depthBias` 实时滑杆，运行时可直接调节阴影深度偏移。
+- 增加交互快捷键：
+	- `F4`：显示/隐藏调试面板
+	- `F5`：切换鼠标捕获（便于在 FPS 视角与 ImGui 交互之间切换）
+- 完成 Debug/Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- include/DebugUI.h
+- src/DebugUI.cpp
+- src/main.cpp
+- CMakeLists.txt
+- CONVERSATION_LOG.md
+
 

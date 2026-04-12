@@ -7,6 +7,7 @@
 #include "Sphere.h"
 #include "MeshObject.h"
 #include "software_renderer.h"
+#include "DebugUI.h"
 #include "ObjLoader.h"
 #include "Texture.h"
 #include <iostream>
@@ -248,19 +249,28 @@ void CreateScene(
     floorObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
     scene.objects.emplace_back(std::move(floorObject));
 
-    //添加一个点光源
+    // 添加一个方向光。
+    // 作用：当前阴影实现是单张 2D ShadowMap（方向光路径），与 Directional 光源模型保持一致可避免阴影形状失真。
+    // 用法：若后续改回 Point 光源阴影，需要切换为立方体阴影贴图（6 面）而不是复用本路径。
     auto light = std::make_unique<Light>(
-        glm::vec3(1.8f, 1.5f, 2.2f), // position
+        glm::vec3(0.0f, 3.5f, 1.5f), // position
         glm::vec3(1.0f, 1.0f, 1.0f), // color
-        glm::vec3(0.0f, -1.0f, -1.0f), // direction (not used for point light)
-        3.5f, // intensity
-        Light::LightType::Point // type
+        glm::vec3(0.0f, -0.79f, -0.61f), // direction（朝向人物中心，形成完整落地阴影）
+        1.0f, // intensity
+        Light::LightType::Directional // type
     );
 
+    // 作用：按当前场景尺度扩大方向光阴影覆盖范围，避免阴影被正交体过早裁剪。
+    // 用法：当场景物体变大或距离变化时，可联动调节 halfSize / near / far。
+    light->setShadowOrthoHalfSize(6.0f);
+    light->setShadowNearPlane(0.1f);
+    light->setShadowFarPlane(30.0f);
+
     // 作用：将创建好的光源加入场景，供片段着色阶段进行光照计算。
-    // 用法：当前先加入一个点光源，后续可扩展为多光源列表。
+    // 用法：当前先加入一个方向光，后续可扩展为多光源列表。
     scene.lights.emplace_back(std::move(light));
 
+    Scene::instance = &scene; // 设置场景单例实例，供全局访问
 }
 
 std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)>Bling_Phong_Shader = [](std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene){
@@ -345,6 +355,7 @@ std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payl
     // 用法：相比“直接加 albedo”能更明显体现光照方向变化。
     glm::vec3 finalLinear = albedo * diffuseLighting + specularLighting;
     finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
+    finalLinear*= payload.shadowVisibility; // 乘以阴影可见性，模拟简单的阴影效果
 
     Color finalColor;
     finalColor.r = static_cast<std::uint8_t>(finalLinear.r * 255.0f);
@@ -393,6 +404,8 @@ int main(int argc, char* argv[])
     std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
     std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
     std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+    std::cout << "Debug UI: ON (press F4 to toggle panel)" << '\n';
+    std::cout << "Mouse capture: ON (press F5 to toggle for ImGui interaction)" << '\n';
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
@@ -438,6 +451,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    DebugUI debugUI;
+    if (!debugUI.initialize(window, presentRenderer)) {
+        std::cerr << "DebugUI init failed, continue without ImGui panel" << '\n';
+    }
+
     bool running = true;
     const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
     Uint64 fpsWindowStartCounter = SDL_GetPerformanceCounter();
@@ -452,23 +470,43 @@ int main(int argc, char* argv[])
     float cameraPitchDeg = 0.0f;
     constexpr float kMouseSensitivityDegPerPixel = 0.12f;
     constexpr float kMaxPitchDeg = 89.0f;
-    bool mouseCaptureEnabled = true;
+    bool mouseCaptureEnabled = false;
+    bool mouseCaptureSupported = true;
 
     if (scene.camera) {
         ExtractYawPitchFromCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
         ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
     }
 
-    // 作用：启用相对鼠标模式，用鼠标位移驱动 FPS 视角旋转。
-    // 用法：进入渲染循环前开启；失焦时会临时关闭，回到窗口时自动恢复。
-    if (SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
-        std::cerr << "SDL_SetRelativeMouseMode failed: " << SDL_GetError() << '\n';
-        mouseCaptureEnabled = false;
-    } else {
-        SDL_SetWindowGrab(window, SDL_TRUE);
-        SDL_ShowCursor(SDL_DISABLE);
-        std::cout << "Mouse look: ON (move mouse to yaw/pitch)" << '\n';
-    }
+    auto SetMouseCapture = [&](bool enabled) {
+        if (!mouseCaptureSupported) {
+            return;
+        }
+
+        // 作用：统一管理鼠标捕获/释放，保证 FPS 视角与 ImGui 面板输入可平滑切换。
+        // 用法：enabled=true 进入 FPS 视角；enabled=false 释放光标用于点击 UI。
+        if (enabled) {
+            if (SDL_SetRelativeMouseMode(SDL_TRUE) == 0) {
+                SDL_SetWindowGrab(window, SDL_TRUE);
+                SDL_ShowCursor(SDL_DISABLE);
+                mouseCaptureEnabled = true;
+            } else {
+                std::cerr << "SDL_SetRelativeMouseMode failed: " << SDL_GetError() << '\n';
+                SDL_SetRelativeMouseMode(SDL_FALSE);
+                SDL_SetWindowGrab(window, SDL_FALSE);
+                SDL_ShowCursor(SDL_ENABLE);
+                mouseCaptureEnabled = false;
+                mouseCaptureSupported = false;
+            }
+        } else {
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_SetWindowGrab(window, SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
+            mouseCaptureEnabled = false;
+        }
+    };
+
+    SetMouseCapture(true);
 
     while (running) {
         const Uint64 nowCounter = SDL_GetPerformanceCounter();
@@ -477,13 +515,15 @@ int main(int argc, char* argv[])
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            debugUI.processEvent(event);
+
             if (event.type == SDL_QUIT) {
                 running = false;
             }
 
             // 作用：将鼠标相对位移转换为 FPS 相机的 yaw/pitch 变化。
             // 用法：保持窗口聚焦并移动鼠标，即可水平转向与上下俯仰。
-            if (event.type == SDL_MOUSEMOTION && mouseCaptureEnabled && scene.camera) {
+            if (event.type == SDL_MOUSEMOTION && mouseCaptureEnabled && scene.camera && !debugUI.wantsMouseCapture()) {
                 cameraYawDeg += static_cast<float>(event.motion.xrel) * kMouseSensitivityDegPerPixel;
                 cameraPitchDeg -= static_cast<float>(event.motion.yrel) * kMouseSensitivityDegPerPixel;
 
@@ -499,7 +539,7 @@ int main(int argc, char* argv[])
 
             // 作用：用 KEYDOWN/KEYUP 维护 WASD 持续按下状态，避免依赖全局键盘状态数组。
             // 用法：按下时置 true，抬起时置 false，后续移动逻辑直接读取该状态。
-            if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !debugUI.wantsKeyboardCapture()) {
                 const bool isKeyDown = (event.type == SDL_KEYDOWN);
                 const SDL_Keycode sym = event.key.keysym.sym;
                 switch (sym) {
@@ -523,7 +563,29 @@ int main(int argc, char* argv[])
             // 作用：功能键使用 KEYDOWN 的边沿触发（repeat==0），避免连续触发。
             // 用法：单击一次 F1/F2/F3/ESC，只会触发一次状态切换或退出。
             if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
-                switch (event.key.keysym.sym) {
+                const SDL_Keycode key = event.key.keysym.sym;
+
+                if (key == SDLK_F4) {
+                    debugUI.toggleVisible();
+                    std::cout << "Debug UI: "
+                              << (debugUI.isVisible() ? "ON" : "OFF")
+                              << " (press F4 to toggle panel)" << '\n';
+                    continue;
+                }
+
+                if (key == SDLK_F5) {
+                    SetMouseCapture(!mouseCaptureEnabled);
+                    std::cout << "Mouse capture: "
+                              << (mouseCaptureEnabled ? "ON" : "OFF")
+                              << " (press F5 to toggle for ImGui interaction)" << '\n';
+                    continue;
+                }
+
+                if (debugUI.wantsKeyboardCapture()) {
+                    continue;
+                }
+
+                switch (key) {
                 case SDLK_ESCAPE:
                     running = false;
                     break;
@@ -560,18 +622,7 @@ int main(int argc, char* argv[])
                     moveRight = false;
 
                     if (mouseCaptureEnabled) {
-                        SDL_SetRelativeMouseMode(SDL_FALSE);
-                        SDL_SetWindowGrab(window, SDL_FALSE);
-                        SDL_ShowCursor(SDL_ENABLE);
-                    }
-                }
-
-                if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
-                    if (mouseCaptureEnabled) {
-                        if (SDL_SetRelativeMouseMode(SDL_TRUE) == 0) {
-                            SDL_SetWindowGrab(window, SDL_TRUE);
-                            SDL_ShowCursor(SDL_DISABLE);
-                        }
+                        SetMouseCapture(false);
                     }
                 }
             }
@@ -579,6 +630,13 @@ int main(int argc, char* argv[])
 
         if (!running) {
             break;
+        }
+
+        if (debugUI.wantsKeyboardCapture()) {
+            moveForward = false;
+            moveBackward = false;
+            moveLeft = false;
+            moveRight = false;
         }
 
         if (scene.camera) {
@@ -596,6 +654,9 @@ int main(int argc, char* argv[])
         renderer.clear({ 0, 0, 0, 255 });
         renderer.DrawScene(scene);
 
+        debugUI.beginFrame();
+        debugUI.drawShadowPanel(scene);
+
         if (SDL_UpdateTexture(
                 framebufferTexture,
                 nullptr,
@@ -608,6 +669,7 @@ int main(int argc, char* argv[])
 
         SDL_RenderClear(presentRenderer);
         SDL_RenderCopy(presentRenderer, framebufferTexture, nullptr, nullptr);
+        debugUI.render();
         SDL_RenderPresent(presentRenderer);
 
         ++fpsFrameCount;
@@ -624,6 +686,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    debugUI.shutdown();
     SDL_DestroyTexture(framebufferTexture);
     SDL_DestroyRenderer(presentRenderer);
     SDL_DestroyWindow(window);

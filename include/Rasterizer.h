@@ -31,6 +31,7 @@ struct Fragment
     Color color; // 颜色
     glm::vec3 normal; // 法线向量
     glm::vec3 worldPos; // 世界空间位置
+    float shadowVisibility = 1.0f; // 阴影可见性（1=全亮，0=全阴影）
 };
 
 struct Edge {
