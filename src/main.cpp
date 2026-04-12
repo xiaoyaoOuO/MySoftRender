@@ -186,6 +186,45 @@ void ApplyYawPitchToCamera(Camera& camera, float yawDeg, float pitchDeg)
     camera.setTarget(camera.position() + forward);
     camera.setUp(cameraUp);
 }
+
+/**
+ * @brief 统一管理鼠标捕获与释放状态，供 FPS 视角和 ImGui 交互切换。
+ * @param enabled true 表示开启相对鼠标模式并隐藏光标，false 表示释放光标。
+ * @param window SDL 窗口指针，用于设置窗口抓取状态。
+ * @param mouseCaptureEnabled 当前是否处于鼠标捕获状态（函数内会更新）。
+ * @param mouseCaptureSupported 当前平台是否支持相对鼠标模式（函数内会更新）。
+ * @return 无返回值。
+ */
+void SetMouseCaptureState(
+    bool enabled,
+    SDL_Window* window,
+    bool& mouseCaptureEnabled,
+    bool& mouseCaptureSupported)
+{
+    if (!mouseCaptureSupported) {
+        return;
+    }
+
+    if (enabled) {
+        if (SDL_SetRelativeMouseMode(SDL_TRUE) == 0) {
+            SDL_SetWindowGrab(window, SDL_TRUE);
+            SDL_ShowCursor(SDL_DISABLE);
+            mouseCaptureEnabled = true;
+        } else {
+            std::cerr << "SDL_SetRelativeMouseMode failed: " << SDL_GetError() << '\n';
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_SetWindowGrab(window, SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
+            mouseCaptureEnabled = false;
+            mouseCaptureSupported = false;
+        }
+    } else {
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_SetWindowGrab(window, SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+        mouseCaptureEnabled = false;
+    }
+}
 }
 
 // 作用：构建场景对象，并将纹理按对象维度绑定到 Mary 网格对象上。
@@ -249,48 +288,73 @@ void CreateScene(
     floorObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
     scene.objects.emplace_back(std::move(floorObject));
 
-    // 添加一个方向光。
-    // 作用：当前阴影实现是单张 2D ShadowMap（方向光路径），与 Directional 光源模型保持一致可避免阴影形状失真。
-    // 用法：若后续改回 Point 光源阴影，需要切换为立方体阴影贴图（6 面）而不是复用本路径。
+    // 添加一个点光源。
+    // 作用：点光源可向四周发光，配合 6 面阴影图可得到更自然的局部阴影变化。
+    // 用法：位置放在模型前上方，便于在默认视角下观察完整投影。
     auto light = std::make_unique<Light>(
-        glm::vec3(0.0f, 3.5f, 1.5f), // position
+        glm::vec3(0.0f, 2.2f, 0.6f), // position
         glm::vec3(1.0f, 1.0f, 1.0f), // color
-        glm::vec3(0.0f, -0.79f, -0.61f), // direction（朝向人物中心，形成完整落地阴影）
-        1.0f, // intensity
-        Light::LightType::Directional // type
+        glm::vec3(0.0f, -0.62f, -0.78f), // direction（点光源下仅作调试展示）
+        2.4f, // intensity
+        Light::LightType::Point // type
     );
 
-    // 作用：按当前场景尺度扩大方向光阴影覆盖范围，避免阴影被正交体过早裁剪。
-    // 用法：当场景物体变大或距离变化时，可联动调节 halfSize / near / far。
-    light->setShadowOrthoHalfSize(6.0f);
+    // 作用：设置点光阴影视锥的深度范围，近平面过小会加重深度精度压力。
+    // 用法：按场景尺寸调节 near/far，默认值保证 Mary 与地面都在可投影范围内。
     light->setShadowNearPlane(0.1f);
-    light->setShadowFarPlane(30.0f);
+    light->setShadowFarPlane(12.0f);
+
+    // 作用：设置点光阴影每个面的分辨率，6 面总开销会随该值平方增长。
+    // 用法：默认 512 可在质量和性能间取得平衡，后续可在 ImGui 调节。
+    scene.shadowSettings.shadowMapResolution = 512;
 
     // 作用：将创建好的光源加入场景，供片段着色阶段进行光照计算。
-    // 用法：当前先加入一个方向光，后续可扩展为多光源列表。
+    // 用法：当前先加入一个点光源，后续可扩展为多光源列表。
     scene.lights.emplace_back(std::move(light));
+
+    // 作用：创建光源可视化代理球体，让相机能够直观看到点光源位置。
+    // 用法：代理球每帧同步到点光源坐标，且不参与阴影投射，避免干扰场景阴影结果。
+    auto lightProxySphere = std::make_unique<Sphere>(0.08f, 1, glm::vec3(1.0f, 0.95f, 0.25f));
+    if (!scene.lights.empty() && scene.lights[0]) {
+        lightProxySphere->setPosition(scene.lights[0]->position());
+    }
+    lightProxySphere->setCastShadow(false);
+    scene.lightProxyObjectIndex = static_cast<int>(scene.objects.size());
+    scene.objects.emplace_back(std::move(lightProxySphere));
 
     Scene::instance = &scene; // 设置场景单例实例，供全局访问
 }
 
-std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)>Bling_Phong_Shader = [](std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene){
-    // 作用：在世界坐标下执行可见性更强的 Blinn-Phong 光照（环境+漫反射+高光）。
-    // 用法：输入 payload.worldPos / payload.normal，按场景 lights 累加受光贡献。
+/**
+ * @brief 把颜色统一转换到 0~1 区间，兼容 0~1 与 0~255 两种输入习惯。
+ * @param color 输入颜色，可为线性 0~1 或 8-bit 标准化前的 0~255。
+ * @return 返回归一化后的 0~1 颜色。
+ */
+glm::vec3 NormalizeColorToUnitRange(const glm::vec3& color)
+{
+    const float maxChannel = std::max(color.r, std::max(color.g, color.b));
+    if (maxChannel > 1.0f) {
+        return color / 255.0f;
+    }
+    return color;
+}
+
+/**
+ * @brief 在世界坐标下执行 Blinn-Phong 光照并写回最终像素。
+ * @param colorbuffer 最终颜色缓冲，函数会把结果写入 payload.bufferIndex。
+ * @param payload 当前片元输入（颜色、法线、世界坐标、阴影可见性等）。
+ * @param scene 场景数据（相机、环境光、光源列表）。
+ * @return 无返回值。
+ */
+void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)
+{
     if (!scene.camera) {
         colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(payload.color);
         return;
     }
 
-    auto normalizeColor = [](const glm::vec3& color) {
-        const float maxChannel = std::max(color.r, std::max(color.g, color.b));
-        if (maxChannel > 1.0f) {
-            return color / 255.0f;
-        }
-        return color;
-    };
-
     const glm::vec3 albedo = glm::vec3(payload.color.r, payload.color.g, payload.color.b) / 255.0f;
-    const glm::vec3 ambientColor = normalizeColor(scene.ambientLightColor);
+    const glm::vec3 ambientColor = NormalizeColorToUnitRange(scene.ambientLightColor);
 
     glm::vec3 normal = payload.normal;
     if (glm::dot(normal, normal) <= 1e-12f) {
@@ -318,7 +382,7 @@ std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payl
         }
 
         const Light& light = *lightPtr;
-        const glm::vec3 lightColor = normalizeColor(light.color());
+        const glm::vec3 lightColor = NormalizeColorToUnitRange(light.color());
 
         glm::vec3 lightDir(0.0f, 1.0f, 0.0f);
         float attenuation = 1.0f;
@@ -355,7 +419,7 @@ std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payl
     // 用法：相比“直接加 albedo”能更明显体现光照方向变化。
     glm::vec3 finalLinear = albedo * diffuseLighting + specularLighting;
     finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
-    finalLinear*= payload.shadowVisibility; // 乘以阴影可见性，模拟简单的阴影效果
+    finalLinear *= payload.shadowVisibility; // 乘以阴影可见性，模拟简单的阴影效果
 
     Color finalColor;
     finalColor.r = static_cast<std::uint8_t>(finalLinear.r * 255.0f);
@@ -363,7 +427,7 @@ std::function<void(std::vector<std::uint32_t>& colorbuffer, const Fragment& payl
     finalColor.b = static_cast<std::uint8_t>(finalLinear.b * 255.0f);
     finalColor.a = 255;
     colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(finalColor);
-};
+}
 
 int main(int argc, char* argv[])
 {
@@ -400,7 +464,7 @@ int main(int argc, char* argv[])
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     renderer.setBackfaceCullingEnabled(true);
     renderer.setMsaaSampleCount(1);
-    renderer.SetFragmentShader(Bling_Phong_Shader);
+    renderer.SetFragmentShader(BlingPhongShader);
     std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
     std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
     std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
@@ -478,35 +542,7 @@ int main(int argc, char* argv[])
         ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
     }
 
-    auto SetMouseCapture = [&](bool enabled) {
-        if (!mouseCaptureSupported) {
-            return;
-        }
-
-        // 作用：统一管理鼠标捕获/释放，保证 FPS 视角与 ImGui 面板输入可平滑切换。
-        // 用法：enabled=true 进入 FPS 视角；enabled=false 释放光标用于点击 UI。
-        if (enabled) {
-            if (SDL_SetRelativeMouseMode(SDL_TRUE) == 0) {
-                SDL_SetWindowGrab(window, SDL_TRUE);
-                SDL_ShowCursor(SDL_DISABLE);
-                mouseCaptureEnabled = true;
-            } else {
-                std::cerr << "SDL_SetRelativeMouseMode failed: " << SDL_GetError() << '\n';
-                SDL_SetRelativeMouseMode(SDL_FALSE);
-                SDL_SetWindowGrab(window, SDL_FALSE);
-                SDL_ShowCursor(SDL_ENABLE);
-                mouseCaptureEnabled = false;
-                mouseCaptureSupported = false;
-            }
-        } else {
-            SDL_SetRelativeMouseMode(SDL_FALSE);
-            SDL_SetWindowGrab(window, SDL_FALSE);
-            SDL_ShowCursor(SDL_ENABLE);
-            mouseCaptureEnabled = false;
-        }
-    };
-
-    SetMouseCapture(true);
+    SetMouseCaptureState(true, window, mouseCaptureEnabled, mouseCaptureSupported);
 
     while (running) {
         const Uint64 nowCounter = SDL_GetPerformanceCounter();
@@ -574,7 +610,7 @@ int main(int argc, char* argv[])
                 }
 
                 if (key == SDLK_F5) {
-                    SetMouseCapture(!mouseCaptureEnabled);
+                    SetMouseCaptureState(!mouseCaptureEnabled, window, mouseCaptureEnabled, mouseCaptureSupported);
                     std::cout << "Mouse capture: "
                               << (mouseCaptureEnabled ? "ON" : "OFF")
                               << " (press F5 to toggle for ImGui interaction)" << '\n';
@@ -622,7 +658,7 @@ int main(int argc, char* argv[])
                     moveRight = false;
 
                     if (mouseCaptureEnabled) {
-                        SetMouseCapture(false);
+                        SetMouseCaptureState(false, window, mouseCaptureEnabled, mouseCaptureSupported);
                     }
                 }
             }
@@ -647,6 +683,16 @@ int main(int argc, char* argv[])
                 moveLeft,
                 moveRight,
                 deltaTime);
+        }
+
+        // 作用：每帧同步光源代理球位置，确保相机看到的光源标记与真实点光位置一致。
+        // 用法：当 UI 拖动点光源位置时，代理球会在同一帧跟随更新。
+        if (!scene.lights.empty()
+            && scene.lights[0]
+            && scene.lightProxyObjectIndex >= 0
+            && scene.lightProxyObjectIndex < static_cast<int>(scene.objects.size())
+            && scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]) {
+            scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]->setPosition(scene.lights[0]->position());
         }
 
         scene.RotateObjects(deltaTime);

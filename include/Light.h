@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
+#include <array>
 #include <vector>
 
 
@@ -41,6 +42,8 @@ protected:
 
 
 public:
+    static constexpr std::size_t kPointShadowFaceCount = 6;
+
     Light();
     Light(const glm::vec3& position, const glm::vec3& color, const glm::vec3& direction, float intensity, LightType type);
     ~Light() = default;
@@ -92,5 +95,27 @@ public:
     // 作用：根据当前光源参数重建阴影矩阵。
     // 用法：通常由 setPosition/setDirection/setType 或阴影范围参数修改后自动调用。
     void updateShadowMatrices();
+
+    // 作用：设置点光源阴影每个面的分辨率。
+    // 用法：传入正整数分辨率，阴影 pass 会按该尺寸分配 6 面深度缓存。
+    void setPointShadowResolution(int resolution);
+    int pointShadowResolution() const { return pointShadowResolution_; }
+
+    // 作用：访问点光源阴影某个面的光空间矩阵。
+    // 用法：Shadow Pass 与采样阶段按面索引（0~5）读取矩阵。
+    const glm::mat4& pointLightSpaceMatrix(std::size_t faceIndex) const;
+
+    // 作用：访问点光源阴影某个面的深度缓存。
+    // 用法：第一个 Pass 写入，第二个 Pass 按面索引读取。
+    std::vector<float>& pointLightViewDepths(std::size_t faceIndex);
+    const std::vector<float>& pointLightViewDepths(std::size_t faceIndex) const;
+
+private:
+    int pointShadowResolution_ = 512;
+    std::array<glm::mat4, kPointShadowFaceCount> pointLightSpaceMatrices_ = {
+        glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f),
+        glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)
+    };
+    std::array<std::vector<float>, kPointShadowFaceCount> pointLightViewDepths_;
 };
 

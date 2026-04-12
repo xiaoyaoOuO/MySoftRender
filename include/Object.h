@@ -41,6 +41,14 @@ public:
     // 用法：渲染器据此决定是否启用纹理采样路径。
     bool hasTexture() const { return static_cast<bool>(texture_); }
 
+    // 作用：控制对象是否参与阴影投射。
+    // 用法：调试辅助对象（如光源可视化小球）可关闭阴影投射，避免污染场景阴影结果。
+    void setCastShadow(bool enabled) { castShadow_ = enabled; }
+
+    // 作用：查询对象是否参与阴影投射。
+    // 用法：Shadow Pass 中据此决定是否写入阴影深度。
+    bool castShadow() const { return castShadow_; }
+
     // 作用：获取对象绑定的纹理共享指针。
     // 用法：渲染器通过 get() 拿到 Texture2D* 传给光栅器。
     const std::shared_ptr<Texture2D>& texture() const { return texture_; }
@@ -69,6 +77,7 @@ protected:
     glm::vec3 rotation; // 物体的旋转（欧拉角）
     glm::vec3 scale;    // 物体的缩放
     std::shared_ptr<Texture2D> texture_; // 对象绑定的纹理资源（可为空）
+    bool castShadow_ = true; // 对象是否参与阴影投射
 
     //缓存model矩阵以及dirty标志位，避免每帧重复计算
     mutable glm::mat4 cachedModelMatrix;

@@ -28,8 +28,8 @@ public:
     // 用法：每帧绘制 UI 前调用一次。
     void beginFrame();
 
-    // 作用：绘制阴影调试面板（含 depthBias 调节）。
-    // 用法：每帧在 beginFrame 之后调用，可实时修改 Scene 的阴影参数。
+    // 作用：绘制调试面板（阴影参数、光源参数、模型位姿）。
+    // 用法：每帧在 beginFrame 之后调用，可实时修改 Scene 内各项渲染与场景参数。
     void drawShadowPanel(Scene& scene);
 
     // 作用：提交并渲染 ImGui 绘制数据。
@@ -52,4 +52,5 @@ private:
     SDL_Renderer* renderer_ = nullptr;
     bool initialized_ = false;
     bool visible_ = true;
+    int selectedObjectIndex_ = 0;
 };

@@ -478,4 +478,85 @@
 - CMakeLists.txt
 - CONVERSATION_LOG.md
 
+## 2026-04-12 会话 031
+
+### 实现功能
+
+- 在独立 `DebugUI` 模块中扩展调试面板，新增光源设置区：
+	- 主光源位置、方向、颜色、强度
+	- 投影参数（OrthoHalfSize / Near / Far）
+	- 阴影开关（Cast Shadow）
+- 新增模型移动区：支持选择场景对象并实时调整位置、旋转、缩放。
+- 新增“光源移动到选中模型前上方”一键按钮，并自动朝向模型中心，便于快速获得完整投影效果。
+- 保留并整合原有阴影参数调节（Enable ShadowMap / Depth Bias），继续通过 ImGui 实时生效。
+- 完成 Debug/Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- include/DebugUI.h
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 032
+
+### 实现功能
+
+- 开始点光源阴影主流程实现（第一版可运行）：
+	- 在 `Light` 中新增点光阴影 6 面矩阵与 6 面深度缓存接口。
+	- 在渲染器 Shadow Pass 中新增点光 6 面深度写入路径（按 `shadowMapResolution` 分辨率逐面生成深度图）。
+	- 在光栅化阶段新增点光阴影采样分支：按 `worldPos-lightPos` 选择采样面，并使用对应面矩阵进行深度比较。
+- 新增对象级阴影投射开关 `Object::setCastShadow / castShadow`，用于排除调试辅助对象参与阴影投射。
+- 场景接入点光源可视化代理：
+	- 在 `CreateScene` 中加入点光源小球代理对象。
+	- 每帧将代理对象位置同步到点光源位置，使相机可直接看到点光源。
+- 调试面板增强：
+	- 新增光源类型切换（Point/Directional/Spot）。
+	- 新增阴影分辨率调节滑杆（`Shadow Resolution`）。
+- 完成 Debug/Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- include/Object.h
+- include/Scene.h
+- include/Light.h
+- src/Light.cpp
+- src/software_renderer.cpp
+- src/Rasterizer.cpp
+- src/main.cpp
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 033
+
+### 实现功能
+
+- 完成“Start implementation”阶段收尾核对：逐文件定位并确认点光源阴影与点光可视化改动已落地。
+- 补充关键代码定位，便于后续验收与继续迭代（Light/Renderer/Rasterizer/Main/DebugUI 关键入口）。
+- 本次为说明与验收准备，不新增逻辑代码；沿用上一阶段已通过的 Debug/Release 构建结果。
+
+### 修改文件
+
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 034
+
+### 实现功能
+
+- 根据最新 `Restrict.md` 继续执行“减少函数内 Lambda”的重构：
+	- 将 `software_renderer.cpp` 中裁剪平面判断与 ShadowPass 对象光栅化逻辑提取为具名函数。
+	- 将 `main.cpp` 中鼠标捕获控制与片元着色入口改为具名函数（不再使用函数内 Lambda）。
+	- 将 `Rasterizer.cpp` 中线框片元写入与像素着色回调改为具名函数/具名可调用对象。
+	- 将 `ObjLoader.cpp` 中顶点索引查找创建逻辑从 Lambda 提取为 `GetOrCreateVertexIndex`。
+- 按新规范统一函数注释样式为 Doxygen 形式（`@brief/@param/@return`），应用到本轮新增与重构函数。
+- 完成静态错误检查与 Debug 构建验证，编译通过。
+
+### 修改文件
+
+- src/software_renderer.cpp
+- src/main.cpp
+- src/Rasterizer.cpp
+- src/ObjLoader.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
 

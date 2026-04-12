@@ -12,15 +12,90 @@
 #include <glm/gtc/matrix_inverse.hpp>
 
 namespace {
-// 作用：把阴影贴图二维坐标映射到一维深度缓存索引。
-// 用法：传入像素坐标与贴图宽度，返回 lightViewDepths 的线性下标。
+/**
+ * @brief 把阴影贴图二维坐标映射到一维深度缓存索引。
+ * @param x 阴影贴图像素 x 坐标。
+ * @param y 阴影贴图像素 y 坐标。
+ * @param width 阴影贴图宽度（像素）。
+ * @return 返回深度缓存的一维线性下标。
+ */
 size_t ShadowDepthIndex(int x, int y, int width)
 {
     return static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
 }
 
-// 作用：将三角形从裁剪空间投影到指定分辨率的目标平面（可用于屏幕或阴影图）。
-// 用法：传入 VP 矩阵与目标宽高，函数会原地写回投影后的顶点坐标。
+enum class ClipPlane
+{
+    Left,
+    Right,
+    Bottom,
+    Top,
+    Near,
+    Far
+};
+
+/**
+ * @brief 判断一个裁剪空间顶点是否落在指定平面外侧。
+ * @param vertex 裁剪空间顶点（齐次坐标）。
+ * @param plane 要检测的裁剪平面类型。
+ * @return 返回 true 表示该顶点在指定平面外侧。
+ */
+bool IsVertexOutsideClipPlane(const glm::vec4& vertex, ClipPlane plane)
+{
+    switch (plane) {
+    case ClipPlane::Left:
+        return vertex.x < -vertex.w;
+    case ClipPlane::Right:
+        return vertex.x > vertex.w;
+    case ClipPlane::Bottom:
+        return vertex.y < -vertex.w;
+    case ClipPlane::Top:
+        return vertex.y > vertex.w;
+    case ClipPlane::Near:
+        return vertex.z < -vertex.w;
+    case ClipPlane::Far:
+        return vertex.z > vertex.w;
+    default:
+        return false;
+    }
+}
+
+/**
+ * @brief 判断三角形是否全部落在某一个裁剪平面外侧。
+ * @param clipVertices 三角形三个裁剪空间顶点数组。
+ * @param plane 要检测的裁剪平面类型。
+ * @return 返回 true 表示整三角都在该平面外侧。
+ */
+bool IsTriangleOutsideClipPlane(const glm::vec4 clipVertices[3], ClipPlane plane)
+{
+    return IsVertexOutsideClipPlane(clipVertices[0], plane)
+        && IsVertexOutsideClipPlane(clipVertices[1], plane)
+        && IsVertexOutsideClipPlane(clipVertices[2], plane);
+}
+
+/**
+ * @brief 执行六个裁剪平面的保守拒绝测试。
+ * @param clipVertices 三角形三个裁剪空间顶点数组。
+ * @return 返回 true 表示该三角形应被保守拒绝。
+ */
+bool IsTriangleRejectedByClipPlanes(const glm::vec4 clipVertices[3])
+{
+    return IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Left)
+        || IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Right)
+        || IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Bottom)
+        || IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Top)
+        || IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Near)
+        || IsTriangleOutsideClipPlane(clipVertices, ClipPlane::Far);
+}
+
+/**
+ * @brief 将三角形从裁剪空间投影到指定分辨率的目标平面。
+ * @param mvp 当前投影使用的矩阵（可为相机 VP 或光源 VP）。
+ * @param vertices 三角形顶点数组，函数会原地改写为目标平面坐标。
+ * @param targetWidth 目标平面宽度（像素）。
+ * @param targetHeight 目标平面高度（像素）。
+ * @return 返回 true 表示投影成功且三角形可继续光栅化。
+ */
 bool ProjectTriangleToTarget(const glm::mat4& mvp, std::array<Vertex, 3>& vertices, int targetWidth, int targetHeight)
 {
     glm::vec4 clipVertices[3];
@@ -35,18 +110,7 @@ bool ProjectTriangleToTarget(const glm::mat4& mvp, std::array<Vertex, 3>& vertic
         }
     }
 
-    const auto allOutside = [&](auto planeOut) {
-        return planeOut(clipVertices[0])
-            && planeOut(clipVertices[1])
-            && planeOut(clipVertices[2]);
-    };
-
-    if (allOutside([](const glm::vec4& v) { return v.x < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.x > v.w; })
-        || allOutside([](const glm::vec4& v) { return v.y < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.y > v.w; })
-        || allOutside([](const glm::vec4& v) { return v.z < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.z > v.w; })) {
+    if (IsTriangleRejectedByClipPlanes(clipVertices)) {
         return false;
     }
 
@@ -66,8 +130,14 @@ bool ProjectTriangleToTarget(const glm::mat4& mvp, std::array<Vertex, 3>& vertic
     return true;
 }
 
-// 作用：在第一 Pass 将单个三角形深度写入光源视角深度缓存。
-// 用法：输入已投影到阴影贴图坐标系的三角形顶点，函数会执行深度测试并写入最近深度。
+/**
+ * @brief 在阴影 Pass 中将单个三角形深度写入光源视角深度缓存。
+ * @param vertices 已投影到阴影图像素空间的三角形顶点。
+ * @param width 阴影图宽度（像素）。
+ * @param height 阴影图高度（像素）。
+ * @param shadowDepth 目标阴影深度缓存。
+ * @return 无返回值。
+ */
 void RasterizeShadowDepthTriangle(const std::array<Vertex, 3>& vertices, int width, int height, std::vector<float>& shadowDepth)
 {
     int minX = static_cast<int>(std::floor(std::min({vertices[0].position.x, vertices[1].position.x, vertices[2].position.x})));
@@ -123,6 +193,102 @@ void RasterizeShadowDepthTriangle(const std::array<Vertex, 3>& vertices, int wid
         }
     }
 }
+
+/**
+ * @brief 把场景对象的所有三角形投影到指定阴影目标并写入深度。
+ * @param object 待投影对象（支持 MeshObject/Triangle/Sphere/Cube）。
+ * @param mvp 当前阴影面的 MVP 矩阵（lightVP * model）。
+ * @param targetWidth 目标深度图宽度（像素）。
+ * @param targetHeight 目标深度图高度（像素）。
+ * @param shadowDepthBuffer 目标深度缓存，函数内部会执行深度测试并写入。
+ * @return 无返回值。
+ */
+void RasterizeObjectShadowTriangles(
+    const Object* object,
+    const glm::mat4& mvp,
+    int targetWidth,
+    int targetHeight,
+    std::vector<float>& shadowDepthBuffer)
+{
+    if (const MeshObject* meshObject = dynamic_cast<const MeshObject*>(object)) {
+        if (!meshObject->hasMesh()) {
+            return;
+        }
+
+        const ObjMeshData& mesh = meshObject->mesh();
+        for (const glm::uvec3& face : mesh.indices) {
+            std::array<Vertex, 3> localVertices;
+            bool faceValid = true;
+            for (int i = 0; i < 3; ++i) {
+                const std::uint32_t vertexIndex = face[i];
+                if (vertexIndex >= mesh.vertices.size()) {
+                    faceValid = false;
+                    break;
+                }
+                localVertices[i] = mesh.vertices[vertexIndex];
+            }
+            if (!faceValid) {
+                continue;
+            }
+
+            std::array<Vertex, 3> lightVertices = localVertices;
+            if (!ProjectTriangleToTarget(mvp, lightVertices, targetWidth, targetHeight)) {
+                continue;
+            }
+            RasterizeShadowDepthTriangle(lightVertices, targetWidth, targetHeight, shadowDepthBuffer);
+        }
+        return;
+    }
+
+    if (const Triangle* tri = dynamic_cast<const Triangle*>(object)) {
+        std::array<Vertex, 3> localVertices;
+        for (int i = 0; i < 3; ++i) {
+            localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
+        }
+        std::array<Vertex, 3> lightVertices = localVertices;
+        if (!ProjectTriangleToTarget(mvp, lightVertices, targetWidth, targetHeight)) {
+            return;
+        }
+        RasterizeShadowDepthTriangle(lightVertices, targetWidth, targetHeight, shadowDepthBuffer);
+        return;
+    }
+
+    if (const Sphere* sphere = dynamic_cast<const Sphere*>(object)) {
+        const auto& sphereVertices = sphere->vertices();
+        const auto& sphereIndices = sphere->indices();
+
+        for (const glm::uvec3& face : sphereIndices) {
+            std::array<Vertex, 3> localVertices;
+            for (int i = 0; i < 3; ++i) {
+                const std::uint32_t idx = face[i];
+                localVertices[i].position = glm::vec3(sphereVertices[idx]);
+            }
+            std::array<Vertex, 3> lightVertices = localVertices;
+            if (!ProjectTriangleToTarget(mvp, lightVertices, targetWidth, targetHeight)) {
+                continue;
+            }
+            RasterizeShadowDepthTriangle(lightVertices, targetWidth, targetHeight, shadowDepthBuffer);
+        }
+        return;
+    }
+
+    if (const Cube* cube = dynamic_cast<const Cube*>(object)) {
+        const auto& cubeVertices = cube->vertices();
+        const auto& cubeIndices = cube->indices();
+
+        for (const glm::uvec3& face : cubeIndices) {
+            std::array<Vertex, 3> localVertices;
+            for (int i = 0; i < 3; ++i) {
+                localVertices[i].position = cubeVertices[face[i]];
+            }
+            std::array<Vertex, 3> lightVertices = localVertices;
+            if (!ProjectTriangleToTarget(mvp, lightVertices, targetWidth, targetHeight)) {
+                continue;
+            }
+            RasterizeShadowDepthTriangle(lightVertices, targetWidth, targetHeight, shadowDepthBuffer);
+        }
+    }
+}
 }
 
 
@@ -142,18 +308,7 @@ bool SoftwareRenderer::projectLocalTriangleToScreen(const glm::mat4& mvp,std::ar
         }
     }
 
-    const auto allOutside = [&](auto planeOut) {
-        return planeOut(clipVertices[0])
-            && planeOut(clipVertices[1])
-            && planeOut(clipVertices[2]);
-    };
-
-    if (allOutside([](const glm::vec4& v) { return v.x < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.x > v.w; })
-        || allOutside([](const glm::vec4& v) { return v.y < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.y > v.w; })
-        || allOutside([](const glm::vec4& v) { return v.z < -v.w; })
-        || allOutside([](const glm::vec4& v) { return v.z > v.w; })) {
+    if (IsTriangleRejectedByClipPlanes(clipVertices)) {
         return false;
     }
 
@@ -318,94 +473,57 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
 
     if(scene.shadowSettings.enableShadowMap && mainLight && mainLight->castShadowEnabled())
     {
-        // 作用：让光源深度缓存尺寸与软件渲染颜色缓冲保持一致。
-        // 用法：第一 Pass 写入的 depthbuffer 使用当前 renderer 的 width_/height_。
-        const int shadowWidth = width_;
-        const int shadowHeight = height_;
-        mainLight->setShadowMapSize(shadowWidth, shadowHeight);
-        std::vector<float>& lightDepths = mainLight->lightViewDepths();
-        const size_t requiredSize = static_cast<size_t>(shadowWidth) * static_cast<size_t>(shadowHeight);
-        if (lightDepths.size() != requiredSize) {
-            lightDepths.assign(requiredSize, std::numeric_limits<float>::infinity());
+
+        if (mainLight->type() == Light::LightType::Point) {
+            // 作用：点光源阴影使用 6 面深度图，每个面独立投影与写入深度。
+            // 用法：按 shadowMapResolution 分配每面缓存，并对 6 个面循环执行阴影 pass。
+            const int pointShadowResolution = std::max(scene.shadowSettings.shadowMapResolution, 16);
+            mainLight->setPointShadowResolution(pointShadowResolution);
+
+            for (std::size_t face = 0; face < Light::kPointShadowFaceCount; ++face) {
+                std::vector<float>& faceDepths = mainLight->pointLightViewDepths(face);
+                const size_t requiredSize = static_cast<size_t>(pointShadowResolution) * static_cast<size_t>(pointShadowResolution);
+                if (faceDepths.size() != requiredSize) {
+                    faceDepths.assign(requiredSize, std::numeric_limits<float>::infinity());
+                } else {
+                    std::fill(faceDepths.begin(), faceDepths.end(), std::numeric_limits<float>::infinity());
+                }
+
+                const glm::mat4& faceMatrix = mainLight->pointLightSpaceMatrix(face);
+
+                for (const auto& obj : scene.objects) {
+                    if (!obj || !obj->castShadow()) {
+                        continue;
+                    }
+
+                    const glm::mat4 model = obj->modelMatrix();
+                    const glm::mat4 mvp = faceMatrix * model;
+                    RasterizeObjectShadowTriangles(obj.get(), mvp, pointShadowResolution, pointShadowResolution, faceDepths);
+                }
+            }
         } else {
-            std::fill(lightDepths.begin(), lightDepths.end(), std::numeric_limits<float>::infinity());
-        }
+            // 作用：方向光路径继续使用单张 2D 深度图，与已有阴影流程兼容。
+            // 用法：按当前渲染分辨率分配缓存，使用 lightSpaceMatrix 做一次阴影 pass。
+            const int shadowWidth = width_;
+            const int shadowHeight = height_;
+            mainLight->setShadowMapSize(shadowWidth, shadowHeight);
+            std::vector<float>& lightDepths = mainLight->lightViewDepths();
+            const size_t requiredSize = static_cast<size_t>(shadowWidth) * static_cast<size_t>(shadowHeight);
+            if (lightDepths.size() != requiredSize) {
+                lightDepths.assign(requiredSize, std::numeric_limits<float>::infinity());
+            } else {
+                std::fill(lightDepths.begin(), lightDepths.end(), std::numeric_limits<float>::infinity());
+            }
 
-        const glm::mat4 lightMatrix = mainLight->lightSpaceMatrix();
-
-        for(const auto& obj : scene.objects)
-        {
-            const glm::mat4 model = obj->modelMatrix();
-            const glm::mat4 mvp = lightMatrix * model;
-
-            if (const MeshObject* meshObject = dynamic_cast<MeshObject*>(obj.get())) {
-                if (!meshObject->hasMesh()) {
+            const glm::mat4 lightMatrix = mainLight->lightSpaceMatrix();
+            for (const auto& obj : scene.objects) {
+                if (!obj || !obj->castShadow()) {
                     continue;
                 }
 
-                const ObjMeshData& mesh = meshObject->mesh();
-                for (const glm::uvec3& face : mesh.indices) {
-                    std::array<Vertex, 3> localVertices;
-                    bool faceValid = true;
-                    for (int i = 0; i < 3; ++i) {
-                        const std::uint32_t vertexIndex = face[i];
-                        if (vertexIndex >= mesh.vertices.size()) {
-                            faceValid = false;
-                            break;
-                        }
-                        localVertices[i] = mesh.vertices[vertexIndex];
-                    }
-                    if (!faceValid) {
-                        continue;
-                    }
-
-                    std::array<Vertex, 3> lightVertices = localVertices;
-                    if (!ProjectTriangleToTarget(mvp, lightVertices, shadowWidth, shadowHeight)) {
-                        continue;
-                    }
-                    RasterizeShadowDepthTriangle(lightVertices, shadowWidth, shadowHeight, lightDepths);
-                }
-            } else if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
-                std::array<Vertex, 3> localVertices;
-                for (int i = 0; i < 3; ++i) {
-                    localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
-                }
-                std::array<Vertex, 3> lightVertices = localVertices;
-                if (!ProjectTriangleToTarget(mvp, lightVertices, shadowWidth, shadowHeight)) {
-                    continue;
-                }
-                RasterizeShadowDepthTriangle(lightVertices, shadowWidth, shadowHeight, lightDepths);
-            }else if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
-                const auto& sphereVertices = sphere->vertices();
-                const auto& sphereIndices = sphere->indices();
-
-                for (const glm::uvec3& face : sphereIndices) {
-                    std::array<Vertex, 3> localVertices;
-                    for (int i = 0; i < 3; ++i) {
-                        int idx = face[i];
-                        localVertices[i].position = glm::vec3(sphereVertices[idx]);
-                    }
-                    std::array<Vertex, 3> lightVertices = localVertices;
-                    if (!ProjectTriangleToTarget(mvp, lightVertices, shadowWidth, shadowHeight)) {
-                        continue;
-                    }
-                    RasterizeShadowDepthTriangle(lightVertices, shadowWidth, shadowHeight, lightDepths);
-                }
-            }else if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
-                const auto& cubeVertices = cube->vertices();
-                const auto& cubeIndices = cube->indices();
-
-                for (const glm::uvec3& face : cubeIndices) {
-                    std::array<Vertex, 3> localVertices;
-                    for (int i = 0; i < 3; ++i) {
-                        localVertices[i].position = cubeVertices[face[i]];
-                    }
-                    std::array<Vertex, 3> lightVertices = localVertices;
-                    if (!ProjectTriangleToTarget(mvp, lightVertices, shadowWidth, shadowHeight)) {
-                        continue;
-                    }
-                    RasterizeShadowDepthTriangle(lightVertices, shadowWidth, shadowHeight, lightDepths);
-                }
+                const glm::mat4 model = obj->modelMatrix();
+                const glm::mat4 mvp = lightMatrix * model;
+                RasterizeObjectShadowTriangles(obj.get(), mvp, shadowWidth, shadowHeight, lightDepths);
             }
         }
     }

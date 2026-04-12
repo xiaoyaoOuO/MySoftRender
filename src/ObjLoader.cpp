@@ -209,6 +209,44 @@ void GenerateMissingNormals(ObjMeshData& mesh)
     mesh.hasNormals = true;
 }
 
+/**
+ * @brief 把 OBJ 的 position/uv/normal 引用组合映射为唯一顶点索引，避免重复创建顶点。
+ * @param ref 当前面片顶点引用（已转换为 0-based 的位置/纹理/法线索引）。
+ * @param positions OBJ 位置数组（v）。
+ * @param texCoords OBJ 纹理坐标数组（vt）。
+ * @param normals OBJ 法线数组（vn）。
+ * @param outMesh 输出网格，若遇到新引用会向 vertices 追加顶点。
+ * @param vertexLut 引用到顶点索引的哈希表缓存。
+ * @return 返回可直接写入 indices 的顶点索引。
+ */
+std::uint32_t GetOrCreateVertexIndex(
+    const VertexRef& ref,
+    const std::vector<glm::vec3>& positions,
+    const std::vector<glm::vec2>& texCoords,
+    const std::vector<glm::vec3>& normals,
+    ObjMeshData& outMesh,
+    std::unordered_map<VertexRef, std::uint32_t, VertexRefHash>& vertexLut)
+{
+    const auto found = vertexLut.find(ref);
+    if (found != vertexLut.end()) {
+        return found->second;
+    }
+
+    const std::uint32_t newIndex = static_cast<std::uint32_t>(outMesh.vertices.size());
+    Vertex vertex;
+    vertex.position = positions[static_cast<std::size_t>(ref.positionIndex)];
+    if (ref.texCoordIndex >= 0) {
+        vertex.texCoord = texCoords[static_cast<std::size_t>(ref.texCoordIndex)];
+    }
+    if (ref.normalIndex >= 0) {
+        vertex.normal = normals[static_cast<std::size_t>(ref.normalIndex)];
+    }
+
+    outMesh.vertices.push_back(vertex);
+    vertexLut.emplace(ref, newIndex);
+    return newIndex;
+}
+
 } // namespace
 
 // 重置容器与状态标记，便于复用同一个 ObjMeshData 对象。
@@ -242,30 +280,7 @@ bool ObjLoader::LoadFromFile(const std::string& filePath, ObjMeshData& outMesh, 
     std::vector<glm::vec3> positions;
     std::vector<glm::vec2> texCoords;
     std::vector<glm::vec3> normals;
-
     std::unordered_map<VertexRef, std::uint32_t, VertexRefHash> vertexLut;
-
-    // 将 position/uv/normal 组合引用映射为唯一顶点索引，避免重复顶点。
-    auto getOrCreateVertexIndex = [&](const VertexRef& ref) -> std::uint32_t {
-        const auto found = vertexLut.find(ref);
-        if (found != vertexLut.end()) {
-            return found->second;
-        }
-
-        const std::uint32_t newIndex = static_cast<std::uint32_t>(outMesh.vertices.size());
-        Vertex vertex;
-        vertex.position = positions[static_cast<std::size_t>(ref.positionIndex)];
-        if (ref.texCoordIndex >= 0) {
-            vertex.texCoord = texCoords[static_cast<std::size_t>(ref.texCoordIndex)];
-        }
-        if (ref.normalIndex >= 0) {
-            vertex.normal = normals[static_cast<std::size_t>(ref.normalIndex)];
-        }
-
-        outMesh.vertices.push_back(vertex);
-        vertexLut.emplace(ref, newIndex);
-        return newIndex;
-    };
 
     std::string line;
     int lineNumber = 0;
@@ -374,9 +389,9 @@ bool ObjLoader::LoadFromFile(const std::string& filePath, ObjMeshData& outMesh, 
 
         // OBJ 支持多边形面，这里使用扇形三角化。
         for (std::size_t i = 1; i + 1 < faceRefs.size(); ++i) {
-            const std::uint32_t i0 = getOrCreateVertexIndex(faceRefs[0]);
-            const std::uint32_t i1 = getOrCreateVertexIndex(faceRefs[i]);
-            const std::uint32_t i2 = getOrCreateVertexIndex(faceRefs[i + 1]);
+            const std::uint32_t i0 = GetOrCreateVertexIndex(faceRefs[0], positions, texCoords, normals, outMesh, vertexLut);
+            const std::uint32_t i1 = GetOrCreateVertexIndex(faceRefs[i], positions, texCoords, normals, outMesh, vertexLut);
+            const std::uint32_t i2 = GetOrCreateVertexIndex(faceRefs[i + 1], positions, texCoords, normals, outMesh, vertexLut);
             outMesh.indices.emplace_back(i0, i1, i2);
         }
     }

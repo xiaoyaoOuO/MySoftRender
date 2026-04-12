@@ -45,6 +45,7 @@ public:
     glm::vec3 ambientLightColor = glm::vec3(1.0f); // 场景的环境光颜色
     float ambientLightIntensity = 0.5f; // 场景的环境光强度
     ShadowSettings shadowSettings; // 场景阴影配置
+    int lightProxyObjectIndex = -1; // 光源可视化代理对象在 objects 中的索引（-1 表示无代理）
 
     inline static Scene* instance = nullptr; // 场景单例实例
 

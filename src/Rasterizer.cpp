@@ -129,7 +129,44 @@ std::array<float, 3> PerspectiveCorrectWeights(
     return {p0 * invDenom, p1 * invDenom, p2 * invDenom};
 }
 
-void RasterizeLine(
+/**
+ * @brief 根据光源到片元的方向向量选择点光阴影采样面。
+ * @param lightToFragment 从光源位置指向片元位置的方向向量。
+ * @return 返回 0~5 的面索引（+X/-X/+Y/-Y/+Z/-Z）。
+ */
+int SelectPointShadowFace(const glm::vec3& lightToFragment)
+{
+    const float absX = std::abs(lightToFragment.x);
+    const float absY = std::abs(lightToFragment.y);
+    const float absZ = std::abs(lightToFragment.z);
+
+    if (absX >= absY && absX >= absZ) {
+        return (lightToFragment.x >= 0.0f) ? 0 : 1;
+    }
+    if (absY >= absX && absY >= absZ) {
+        return (lightToFragment.y >= 0.0f) ? 2 : 3;
+    }
+    return (lightToFragment.z >= 0.0f) ? 4 : 5;
+}
+
+/**
+ * @brief 向线框调试片元缓存尝试写入一个像素，包含深度测试与属性填充。
+ * @param x 待写入像素 x 坐标。
+ * @param y 待写入像素 y 坐标。
+ * @param t 线段插值参数（0 表示起点，1 表示终点）。
+ * @param v0 线段起点（屏幕空间，z 为深度）。
+ * @param v1 线段终点（屏幕空间，z 为深度）。
+ * @param normal 线框片元法线（用于保持调试输出结构一致）。
+ * @param width 当前渲染目标宽度（像素）。
+ * @param height 当前渲染目标高度（像素）。
+ * @param zBuffer 像素级深度缓存。
+ * @param fragments 片元输出数组，函数会在通过深度测试后写入。
+ * @return 无返回值。
+ */
+void TryEmitWireframeFragment(
+    int x,
+    int y,
+    float t,
     const glm::vec3& v0,
     const glm::vec3& v1,
     const glm::vec3& normal,
@@ -141,6 +178,37 @@ void RasterizeLine(
     static constexpr float kEdgeDepthBias = 1e-4f;
     static constexpr Color kEdgeColor = {255, 255, 255, 255};
 
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+        return;
+    }
+
+    const float rawDepth = v0.z + (v1.z - v0.z) * t;
+    const float depth = std::clamp(rawDepth - kEdgeDepthBias, 0.0f, 1.0f);
+    const size_t bufferIndex = BufferIndex(x, y, width);
+    if (depth >= zBuffer[bufferIndex]) {
+        return;
+    }
+
+    zBuffer[bufferIndex] = depth;
+    Fragment frag;
+    frag.screenPos = Vec2{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
+    frag.bufferIndex = bufferIndex;
+    frag.depth = depth;
+    frag.color = kEdgeColor;
+    frag.normal = normal;
+    frag.worldPos = glm::vec3(0.0f);
+    fragments.push_back(frag);
+}
+
+void RasterizeLine(
+    const glm::vec3& v0,
+    const glm::vec3& v1,
+    const glm::vec3& normal,
+    int width,
+    int height,
+    std::vector<float>& zBuffer,
+    std::vector<Fragment>& fragments)
+{
     const int x0 = static_cast<int>(std::round(v0.x));
     const int y0 = static_cast<int>(std::round(v0.y));
     const int x1 = static_cast<int>(std::round(v1.x));
@@ -150,32 +218,8 @@ void RasterizeLine(
     const int dy = std::abs(y1 - y0);
     const int steps = std::max(dx, dy);
 
-    auto tryEmitFragment = [&](int x, int y, float t)
-    {
-        if (x < 0 || x >= width || y < 0 || y >= height) {
-            return;
-        }
-
-        const float rawDepth = v0.z + (v1.z - v0.z) * t;
-        const float depth = std::clamp(rawDepth - kEdgeDepthBias, 0.0f, 1.0f);
-        const size_t bufferIndex = BufferIndex(x, y, width);
-        if (depth >= zBuffer[bufferIndex]) {
-            return;
-        }
-
-        zBuffer[bufferIndex] = depth;
-        Fragment frag;
-        frag.screenPos = Vec2{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
-        frag.bufferIndex = bufferIndex;
-        frag.depth = depth;
-        frag.color = kEdgeColor;
-        frag.normal = normal;
-        frag.worldPos = glm::vec3(0.0f);
-        fragments.push_back(frag);
-    };
-
     if (steps == 0) {
-        tryEmitFragment(x0, y0, 0.0f);
+        TryEmitWireframeFragment(x0, y0, 0.0f, v0, v1, normal, width, height, zBuffer, fragments);
         return;
     }
 
@@ -185,9 +229,39 @@ void RasterizeLine(
         const float yf = static_cast<float>(y0) + static_cast<float>(y1 - y0) * t;
         const int x = static_cast<int>(std::round(xf));
         const int y = static_cast<int>(std::round(yf));
-        tryEmitFragment(x, y, t);
+        TryEmitWireframeFragment(x, y, t, v0, v1, normal, width, height, zBuffer, fragments);
     }
 }
+
+// 作用：封装三角形像素着色逻辑，统一处理“纯顶点色”与“纹理*顶点色”两条路径。
+// 参数：
+// - vertices：当前三角形三个顶点，提供插值所需的顶点颜色。
+// - seamSafeTexCoords：已做接缝修正的 UV，避免跨 0/1 边界时插值跳变。
+// - texture：纹理指针，若为空则走纯顶点色路径。
+// 用法：作为 RasterizeTriangleMSAA 的具名回调对象，替代函数内部 Lambda。
+struct ShadePixelWithTexture
+{
+    const std::array<Vertex, 3>& vertices;
+    const std::array<glm::vec2, 3>& seamSafeTexCoords;
+    const Texture2D* texture = nullptr;
+
+    glm::vec3 operator()(float w0, float w1, float w2) const
+    {
+        const glm::vec3 vertexColor = vertices[0].color * w0 + vertices[1].color * w1 + vertices[2].color * w2;
+        if (!texture) {
+            return vertexColor;
+        }
+
+        float u = seamSafeTexCoords[0].x * w0 + seamSafeTexCoords[1].x * w1 + seamSafeTexCoords[2].x * w2;
+        u -= std::floor(u);
+        const float v = std::clamp(
+            seamSafeTexCoords[0].y * w0 + seamSafeTexCoords[1].y * w1 + seamSafeTexCoords[2].y * w2,
+            0.0f,
+            1.0f);
+
+        return texture->sample(u, v) * vertexColor;
+    }
+};
 
 // 作用：执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。
 // 用法：由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
@@ -341,34 +415,68 @@ void RasterizeTriangleMSAA(
                 const Scene& scene = *(Scene::instance);
                 if (scene.shadowSettings.enableShadowMap && !scene.lights.empty()) {
                     const Light& light = *scene.lights[0];
-                    const int shadowWidth = light.shadowMapWidth();
-                    const int shadowHeight = light.shadowMapHeight();
-                    const std::vector<float>& shadowMap = light.lightViewDepths();
+                    const glm::vec3 worldPos = (*worldPositions)[0] * correctedW0
+                        + (*worldPositions)[1] * correctedW1
+                        + (*worldPositions)[2] * correctedW2;
 
-                    if (shadowWidth > 0 && shadowHeight > 0
-                        && shadowMap.size() == static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight)) {
-                        const glm::vec3 worldPos = (*worldPositions)[0] * correctedW0
-                            + (*worldPositions)[1] * correctedW1
-                            + (*worldPositions)[2] * correctedW2;
+                    if (light.type() == Light::LightType::Point) {
+                        const glm::vec3 lightToFragment = worldPos - light.position();
+                        if (glm::dot(lightToFragment, lightToFragment) > 1e-12f) {
+                            const int faceIndex = SelectPointShadowFace(lightToFragment);
+                            const int shadowResolution = light.pointShadowResolution();
+                            const std::vector<float>& shadowMap = light.pointLightViewDepths(static_cast<std::size_t>(faceIndex));
 
-                        glm::vec4 lightSpacePos = light.lightSpaceMatrix() * glm::vec4(worldPos, 1.0f);
-                        if (std::abs(lightSpacePos.w) > 1e-6f) {
-                            lightSpacePos /= lightSpacePos.w;
+                            if (shadowResolution > 0
+                                && shadowMap.size() == static_cast<std::size_t>(shadowResolution) * static_cast<std::size_t>(shadowResolution)) {
+                                glm::vec4 lightSpacePos = light.pointLightSpaceMatrix(static_cast<std::size_t>(faceIndex)) * glm::vec4(worldPos, 1.0f);
+                                if (std::abs(lightSpacePos.w) > 1e-6f) {
+                                    lightSpacePos /= lightSpacePos.w;
 
-                            const bool outsideLightFrustum =
-                                (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
-                                || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
-                                || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
-                            if (!outsideLightFrustum) {
-                                const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowWidth));
-                                const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowHeight));
+                                    const bool outsideLightFrustum =
+                                        (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
+                                        || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
+                                        || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
+                                    if (!outsideLightFrustum) {
+                                        const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowResolution));
+                                        const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowResolution));
 
-                                if (lx >= 0 && lx < shadowWidth && ly >= 0 && ly < shadowHeight) {
-                                    const size_t shadowIndex = BufferIndex(lx, ly, shadowWidth);
-                                    const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
-                                    const float blockerDepth = shadowMap[shadowIndex];
-                                    const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
-                                    frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
+                                        if (lx >= 0 && lx < shadowResolution && ly >= 0 && ly < shadowResolution) {
+                                            const size_t shadowIndex = BufferIndex(lx, ly, shadowResolution);
+                                            const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
+                                            const float blockerDepth = shadowMap[shadowIndex];
+                                            const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
+                                            frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        const int shadowWidth = light.shadowMapWidth();
+                        const int shadowHeight = light.shadowMapHeight();
+                        const std::vector<float>& shadowMap = light.lightViewDepths();
+
+                        if (shadowWidth > 0 && shadowHeight > 0
+                            && shadowMap.size() == static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight)) {
+                            glm::vec4 lightSpacePos = light.lightSpaceMatrix() * glm::vec4(worldPos, 1.0f);
+                            if (std::abs(lightSpacePos.w) > 1e-6f) {
+                                lightSpacePos /= lightSpacePos.w;
+
+                                const bool outsideLightFrustum =
+                                    (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
+                                    || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
+                                    || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
+                                if (!outsideLightFrustum) {
+                                    const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowWidth));
+                                    const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowHeight));
+
+                                    if (lx >= 0 && lx < shadowWidth && ly >= 0 && ly < shadowHeight) {
+                                        const size_t shadowIndex = BufferIndex(lx, ly, shadowWidth);
+                                        const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
+                                        const float blockerDepth = shadowMap[shadowIndex];
+                                        const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
+                                        frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
+                                    }
                                 }
                             }
                         }
@@ -510,7 +618,8 @@ void Rasterizer::Rasterize_Triangle(
     const Vec2* sampleOffsets = ResolveMsaaOffsets(activeSampleCount);
 
     // 调用底层核心 MSAA 渲染函数。
-    // 在 Lambda 回调中，通过计算得到的重心坐标(w0, w1, w2)插值计算每个被覆盖像素的颜色。
+    // 使用具名着色对象，根据重心坐标 (w0, w1, w2) 计算每个被覆盖像素的颜色。
+    const ShadePixelWithTexture shadePixel{vertices, seamSafeTexCoords, texture};
     RasterizeTriangleMSAA(
         screenPositions,
         vertexInvW,
@@ -526,23 +635,5 @@ void Rasterizer::Rasterize_Triangle(
         fragments_,
         activeSampleCount,
         sampleOffsets,
-        [&](float w0, float w1, float w2) {
-            // 基本颜色插值
-            const glm::vec3 vertexColor = vertices[0].color * w0 + vertices[1].color * w1 + vertices[2].color * w2;
-            
-            // 无纹理时直接返回顶点颜色插值
-            if (!texture) {
-                return vertexColor;
-            }
-
-            // 处理有纹理情况，对纹理坐标进行插值
-            float u = seamSafeTexCoords[0].x * w0 + seamSafeTexCoords[1].x * w1 + seamSafeTexCoords[2].x * w2;
-            u -= std::floor(u);
-            const float v = std::clamp(
-                seamSafeTexCoords[0].y * w0 + seamSafeTexCoords[1].y * w1 + seamSafeTexCoords[2].y * w2,
-                0.0f,
-                1.0f);
-
-            return texture->sample(u, v) * vertexColor;
-        });
+        shadePixel);
 }
