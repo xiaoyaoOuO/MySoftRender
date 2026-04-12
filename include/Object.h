@@ -29,28 +29,22 @@ public:
     virtual void setRotation(const glm::vec3& rot) { rotation = rot; modelMatrixDirty = true; }
     virtual void setScale(const glm::vec3& scl) { scale = scl; modelMatrixDirty = true; }
 
-    // 作用：为对象绑定纹理资源。
-    // 用法：传入共享纹理指针后，渲染阶段可按对象读取并使用该纹理。
+    // 为对象绑定纹理资源。传入共享纹理指针后，渲染阶段可按对象读取并使用该纹理。
     void setTexture(const std::shared_ptr<Texture2D>& texture) { texture_ = texture; }
 
-    // 作用：清除对象当前绑定的纹理。
-    // 用法：调用后对象将退回无纹理渲染路径。
+    // 清除对象当前绑定的纹理。调用后对象将退回无纹理渲染路径。
     void clearTexture() { texture_.reset(); }
 
-    // 作用：判断对象是否已绑定纹理。
-    // 用法：渲染器据此决定是否启用纹理采样路径。
+    // 判断对象是否已绑定纹理。渲染器据此决定是否启用纹理采样路径。
     bool hasTexture() const { return static_cast<bool>(texture_); }
 
-    // 作用：控制对象是否参与阴影投射。
-    // 用法：调试辅助对象（如光源可视化小球）可关闭阴影投射，避免污染场景阴影结果。
+    // 控制对象是否参与阴影投射。调试辅助对象（如光源可视化小球）可关闭阴影投射，避免污染场景阴影结果。
     void setCastShadow(bool enabled) { castShadow_ = enabled; }
 
-    // 作用：查询对象是否参与阴影投射。
-    // 用法：Shadow Pass 中据此决定是否写入阴影深度。
+    // 查询对象是否参与阴影投射。Shadow Pass 中据此决定是否写入阴影深度。
     bool castShadow() const { return castShadow_; }
 
-    // 作用：获取对象绑定的纹理共享指针。
-    // 用法：渲染器通过 get() 拿到 Texture2D* 传给光栅器。
+    // 获取对象绑定的纹理共享指针。渲染器通过 get() 拿到 Texture2D* 传给光栅器。
     const std::shared_ptr<Texture2D>& texture() const { return texture_; }
 
     void translate(const glm::vec3& delta) { position += delta; modelMatrixDirty = true; }

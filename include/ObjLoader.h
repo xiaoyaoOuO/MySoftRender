@@ -11,8 +11,7 @@ struct Vertex {
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     glm::vec2 texCoord{0.0f};
     glm::vec3 color{1.0f, 1.0f, 1.0f};
-    // 作用：缓存顶点在投影阶段的 1/w，用于片段属性透视校正插值。
-    // 用法：由投影函数在每帧写入，光栅化阶段按该值修正 worldPos/UV 等属性插值。
+    // 缓存顶点在投影阶段的 1/w，用于片段属性透视校正插值。由投影函数在每帧写入，光栅化阶段按该值修正 worldPos/UV 等属性插值。
     float invW{1.0f};
 };
 

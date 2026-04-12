@@ -3,12 +3,10 @@
 #include "Scene.h"
 
 namespace {
-// 作用：定义采样缓冲的最大展开采样数（用于固定步长索引）。
-// 用法：当前支持 1/2/4 三档 MSAA，底层缓冲按最大 4 采样预分配。
+// 定义采样缓冲的最大展开采样数（用于固定步长索引）。当前支持 1/2/4 三档 MSAA，底层缓冲按最大 4 采样预分配。
 constexpr int kMaxMsaaSamples = 4;
 
-// 作用：定义 1x/2x/4x 对应的子采样点偏移。
-// 用法：根据当前 MSAA 档位选择对应偏移数组参与覆盖测试。
+// 定义 1x/2x/4x 对应的子采样点偏移。根据当前 MSAA 档位选择对应偏移数组参与覆盖测试。
 constexpr std::array<Vec2, 1> kMsaaOffsets1 = {
     Vec2{0.5f, 0.5f}
 };
@@ -23,8 +21,7 @@ constexpr std::array<Vec2, kMaxMsaaSamples> kMsaaOffsets4 = {
     Vec2{0.75f, 0.75f}
 };
 
-// 作用：将传入采样数规范到 1/2/4 三档。
-// 用法：用户传入任意整数时，统一映射到最近合法档位，避免非法参数破坏光栅流程。
+// 将传入采样数规范到 1/2/4 三档。用户传入任意整数时，统一映射到最近合法档位，避免非法参数破坏光栅流程。
 int NormalizeMsaaSampleCount(int sampleCount)
 {
     if (sampleCount <= 1) {
@@ -36,8 +33,7 @@ int NormalizeMsaaSampleCount(int sampleCount)
     return 4;
 }
 
-// 作用：根据采样档位返回对应子采样偏移数组首地址。
-// 用法：配合 activeSampleCount 一起传入光栅主循环。
+// 根据采样档位返回对应子采样偏移数组首地址。配合 activeSampleCount 一起传入光栅主循环。
 const Vec2* ResolveMsaaOffsets(int activeSampleCount)
 {
     if (activeSampleCount == 1) {
@@ -49,8 +45,7 @@ const Vec2* ResolveMsaaOffsets(int activeSampleCount)
     return kMsaaOffsets4.data();
 }
 
-// 作用：把像素索引与子采样索引映射到 sample 缓冲的一维下标。
-// 用法：访问 sampleZBuffer、sampleColorBuffer、sampleNormalBuffer 时统一调用，sampleIndex 范围为 [0, kMaxMsaaSamples)。
+// 把像素索引与子采样索引映射到 sample 缓冲的一维下标。访问 sampleZBuffer、sampleColorBuffer、sampleNormalBuffer 时统一调用，sampleIndex 范围为 [0, kMaxMsaaSamples)。
 size_t SampleBufferIndex(size_t pixelIndex, int sampleIndex)
 {
     return pixelIndex * static_cast<size_t>(kMaxMsaaSamples) + static_cast<size_t>(sampleIndex);
@@ -67,8 +62,7 @@ Color ToColor(const glm::vec3& color)
     };
 }
 
-// 作用：将一个像素对应的 4 个 sample 深度解析为最终像素深度。
-// 用法：在像素完成 sample 级深度写入后调用，返回最靠前（最小）的深度，用于更新像素级 zBuffer。
+// 将一个像素对应的 4 个 sample 深度解析为最终像素深度。在像素完成 sample 级深度写入后调用，返回最靠前（最小）的深度，用于更新像素级 zBuffer。
 float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuffer, int activeSampleCount)
 {
     float minDepth = std::numeric_limits<float>::infinity();
@@ -78,8 +72,7 @@ float ResolvePixelDepth(size_t pixelIndex, const std::vector<float>& sampleZBuff
     return minDepth;
 }
 
-// 作用：将一个像素的 4 个 sample 颜色做平均，得到最终像素颜色。
-// 用法：在通过深度测试的 sample 写入颜色后调用，结果再通过 ToColor 转为 8-bit RGBA 输出。
+// 将一个像素的 4 个 sample 颜色做平均，得到最终像素颜色。在通过深度测试的 sample 写入颜色后调用，结果再通过 ToColor 转为 8-bit RGBA 输出。
 glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sampleColorBuffer, int activeSampleCount)
 {
     glm::vec3 accumulated(0.0f);
@@ -89,8 +82,7 @@ glm::vec3 ResolvePixelColor(size_t pixelIndex, const std::vector<glm::vec3>& sam
     return accumulated * (1.0f / static_cast<float>(activeSampleCount));
 }
 
-// 作用：从与解析深度匹配的 sample 中恢复像素法线，供后续调试显示或可视化使用。
-// 用法：先传入 ResolvePixelDepth 的结果，再从 sampleNormalBuffer 中挑选深度最接近的法线返回。
+// 从与解析深度匹配的 sample 中恢复像素法线，供后续调试显示或可视化使用。先传入 ResolvePixelDepth 的结果，再从 sampleNormalBuffer 中挑选深度最接近的法线返回。
 glm::vec3 ResolvePixelNormal(
     size_t pixelIndex,
     float resolvedDepth,
@@ -108,8 +100,7 @@ glm::vec3 ResolvePixelNormal(
     return glm::vec3(0.0f, 0.0f, 1.0f);
 }
 
-// 作用：将屏幕空间重心坐标修正为透视正确重心坐标。
-// 用法：传入线性重心坐标和每个顶点 invW，返回可用于 worldPos/UV/法线插值的修正权重。
+// 将屏幕空间重心坐标修正为透视正确重心坐标。传入线性重心坐标和每个顶点 invW，返回可用于 worldPos/UV/法线插值的修正权重。
 std::array<float, 3> PerspectiveCorrectWeights(
     float w0,
     float w1,
@@ -147,6 +138,231 @@ int SelectPointShadowFace(const glm::vec3& lightToFragment)
         return (lightToFragment.y >= 0.0f) ? 2 : 3;
     }
     return (lightToFragment.z >= 0.0f) ? 4 : 5;
+}
+
+/**
+ * @brief 将世界坐标投影到阴影贴图像素坐标并返回接收者深度。
+ * @param lightSpaceMatrix 光源空间矩阵。
+ * @param worldPos 片元世界坐标。
+ * @param shadowWidth 阴影贴图宽度。
+ * @param shadowHeight 阴影贴图高度。
+ * @param outShadowX 输出阴影贴图像素 x 坐标。
+ * @param outShadowY 输出阴影贴图像素 y 坐标。
+ * @param outReceiverDepth 输出接收者深度（0~1）。
+ * @return 投影成功返回 true，失败返回 false。
+ */
+bool ProjectWorldPosToShadowTexel(
+    const glm::mat4& lightSpaceMatrix,
+    const glm::vec3& worldPos,
+    int shadowWidth,
+    int shadowHeight,
+    int& outShadowX,
+    int& outShadowY,
+    float& outReceiverDepth)
+{
+    if (shadowWidth <= 0 || shadowHeight <= 0) {
+        return false;
+    }
+
+    glm::vec4 lightSpacePos = lightSpaceMatrix * glm::vec4(worldPos, 1.0f);
+    if (std::abs(lightSpacePos.w) <= 1e-6f) {
+        return false;
+    }
+    lightSpacePos /= lightSpacePos.w;
+
+    const bool outsideLightFrustum =
+        (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
+        || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
+        || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
+    if (outsideLightFrustum) {
+        return false;
+    }
+
+    const int shadowX = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowWidth));
+    const int shadowY = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowHeight));
+    if (shadowX < 0 || shadowX >= shadowWidth || shadowY < 0 || shadowY >= shadowHeight) {
+        return false;
+    }
+
+    outShadowX = shadowX;
+    outShadowY = shadowY;
+    outReceiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
+    return true;
+}
+
+/**
+ * @brief 使用硬阴影深度比较计算可见性。
+ * @param shadowMap 深度贴图数据。
+ * @param shadowWidth 深度贴图宽度。
+ * @param shadowHeight 深度贴图高度。
+ * @param shadowX 采样像素 x 坐标。
+ * @param shadowY 采样像素 y 坐标。
+ * @param receiverDepth 当前接收者深度（0~1）。
+ * @param bias 阴影偏移值。
+ * @param shadowSettings 场景阴影配置，供后续软阴影实现使用。
+ * @return 可见性（1.0 表示受光，0.0 表示被遮挡）。
+ */
+float ComputeShadowVisibilityFromDepthMap(
+    const std::vector<float>& shadowMap,
+    int shadowWidth,
+    int shadowHeight,
+    int shadowX,
+    int shadowY,
+    float receiverDepth,
+    float bias,
+    const ShadowSettings& shadowSettings)
+{
+    if (shadowWidth <= 0 || shadowHeight <= 0) {
+        return 1.0f;
+    }
+
+    const std::size_t requiredSize = static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight);
+    if (shadowMap.size() < requiredSize) {
+        return 1.0f;
+    }
+
+    if (shadowX < 0 || shadowX >= shadowWidth || shadowY < 0 || shadowY >= shadowHeight) {
+        return 1.0f;
+    }
+
+    if (shadowSettings.filterMode == ShadowFilterMode::PCF) {
+        // PCF 采样时固定统计核内样本数量，避免边界样本导致分子/分母不一致。越界坐标做钳制采样，抑制阴影图边缘的异常亮线。
+        const int kernelRadius = std::max(shadowSettings.pcfKernelRadius, 1);
+        int sampleCount = 0;
+        float visibilitySum = 0.0f;
+        const float compareDepth = receiverDepth - bias;
+
+        for (int offsetY = -kernelRadius; offsetY <= kernelRadius; ++offsetY) {
+            for (int offsetX = -kernelRadius; offsetX <= kernelRadius; ++offsetX) {
+                const int sampleX = std::clamp(shadowX + offsetX, 0, shadowWidth - 1);
+                const int sampleY = std::clamp(shadowY + offsetY, 0, shadowHeight - 1);
+                const std::size_t sampleIndex = BufferIndex(sampleX, sampleY, shadowWidth);
+                const float blockerDepth = shadowMap[sampleIndex];
+                visibilitySum += (compareDepth > blockerDepth) ? 0.0f : 1.0f;
+                ++sampleCount;
+            }
+        }
+
+        if (sampleCount <= 0) {
+            return 1.0f;
+        }
+        const float visibility = visibilitySum / static_cast<float>(sampleCount);
+        return std::clamp(visibility, 0.0f, 1.0f);
+    }
+
+    const std::size_t shadowIndex = BufferIndex(shadowX, shadowY, shadowWidth);
+    const float blockerDepth = shadowMap[shadowIndex];
+    const float visibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
+    return std::clamp(visibility, 0.0f, 1.0f);
+}
+
+/**
+ * @brief 计算点光源路径下的硬阴影可见性。
+ * @param scene 当前场景对象，读取阴影参数。
+ * @param light 当前光源对象。
+ * @param worldPos 片元世界坐标。
+ * @return 可见性（1.0 表示受光，0.0 表示被遮挡）。
+ */
+float ComputePointShadowVisibility(const Scene& scene, const Light& light, const glm::vec3& worldPos)
+{
+    const glm::vec3 lightToFragment = worldPos - light.position();
+    if (glm::dot(lightToFragment, lightToFragment) <= 1e-12f) {
+        return 1.0f;
+    }
+
+    const int faceIndex = SelectPointShadowFace(lightToFragment);
+    const int shadowResolution = light.pointShadowResolution();
+    const std::vector<float>& shadowMap = light.pointLightViewDepths(static_cast<std::size_t>(faceIndex));
+    const size_t expectedSize = static_cast<size_t>(shadowResolution) * static_cast<size_t>(shadowResolution);
+    if (shadowResolution <= 0 || shadowMap.size() != expectedSize) {
+        return 1.0f;
+    }
+
+    int shadowX = 0;
+    int shadowY = 0;
+    float receiverDepth = 0.0f;
+
+    if (!ProjectWorldPosToShadowTexel(
+            light.pointLightSpaceMatrix(static_cast<std::size_t>(faceIndex)),
+            worldPos,
+            shadowResolution,
+            shadowResolution,
+            shadowX,
+            shadowY,
+            receiverDepth)) {
+        return 1.0f;
+    }
+
+    const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
+    return ComputeShadowVisibilityFromDepthMap(
+        shadowMap,
+        shadowResolution,
+        shadowResolution,
+        shadowX,
+        shadowY,
+        receiverDepth,
+        bias,
+        scene.shadowSettings
+    );
+}
+
+/**
+ * @brief 计算方向光/聚光路径下的硬阴影可见性。
+ * @param scene 当前场景对象，读取阴影参数。
+ * @param light 当前光源对象。
+ * @param worldPos 片元世界坐标。
+ * @return 可见性（1.0 表示受光，0.0 表示被遮挡）。
+ */
+float ComputeDirectionalShadowVisibility(const Scene& scene, const Light& light, const glm::vec3& worldPos)
+{
+    const int shadowWidth = light.shadowMapWidth();
+    const int shadowHeight = light.shadowMapHeight();
+    const std::vector<float>& shadowMap = light.lightViewDepths();
+    const size_t expectedSize = static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight);
+    if (shadowWidth <= 0 || shadowHeight <= 0 || shadowMap.size() != expectedSize) {
+        return 1.0f;
+    }
+
+    int shadowX = 0;
+    int shadowY = 0;
+    float receiverDepth = 0.0f;
+    if (!ProjectWorldPosToShadowTexel(
+            light.lightSpaceMatrix(),
+            worldPos,
+            shadowWidth,
+            shadowHeight,
+            shadowX,
+            shadowY,
+            receiverDepth)) {
+        return 1.0f;
+    }
+
+    const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
+    return ComputeShadowVisibilityFromDepthMap(
+        shadowMap,
+        shadowWidth,
+        shadowHeight,
+        shadowX,
+        shadowY,
+        receiverDepth,
+        bias,
+        scene.shadowSettings
+    );
+}
+
+/**
+ * @brief 统一计算片元阴影可见性，内部按光源类型分发。
+ * @param scene 当前场景对象。
+ * @param light 当前光源对象。
+ * @param worldPos 片元世界坐标。
+ * @return 可见性（1.0 表示受光，0.0 表示被遮挡）。
+ */
+float ComputeShadowVisibility(const Scene& scene, const Light& light, const glm::vec3& worldPos)
+{
+    if (light.type() == Light::LightType::Point) {
+        return ComputePointShadowVisibility(scene, light, worldPos);
+    }
+    return ComputeDirectionalShadowVisibility(scene, light, worldPos);
 }
 
 /**
@@ -233,12 +449,12 @@ void RasterizeLine(
     }
 }
 
-// 作用：封装三角形像素着色逻辑，统一处理“纯顶点色”与“纹理*顶点色”两条路径。
+// 封装三角形像素着色逻辑，统一处理“纯顶点色”与“纹理*顶点色”两条路径。
 // 参数：
 // - vertices：当前三角形三个顶点，提供插值所需的顶点颜色。
 // - seamSafeTexCoords：已做接缝修正的 UV，避免跨 0/1 边界时插值跳变。
 // - texture：纹理指针，若为空则走纯顶点色路径。
-// 用法：作为 RasterizeTriangleMSAA 的具名回调对象，替代函数内部 Lambda。
+// 作为 RasterizeTriangleMSAA 的具名回调对象，替代函数内部 Lambda。
 struct ShadePixelWithTexture
 {
     const std::array<Vertex, 3>& vertices;
@@ -263,8 +479,7 @@ struct ShadePixelWithTexture
     }
 };
 
-// 作用：执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。
-// 用法：由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
+// 执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
 template <typename ShadePixelFunc>
 void RasterizeTriangleMSAA(
     const std::array<glm::vec3, 3>& vertexs,
@@ -409,8 +624,7 @@ void RasterizeTriangleMSAA(
             frag.depth = resolvedDepth;
             frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer, activeSampleCount));
 
-            // 作用：根据光源阴影贴图判断当前片段是否被遮挡。
-            // 用法：先做 NDC 与贴图边界检查，再读取深度，避免越界索引导致阴影随机跳变。
+            // 根据光源阴影贴图判断当前片段是否被遮挡。将阴影采样逻辑提取到独立函数，减少主光栅化流程中的 if 嵌套层级。
             if (worldPositions != nullptr && Scene::instance) {
                 const Scene& scene = *(Scene::instance);
                 if (scene.shadowSettings.enableShadowMap && !scene.lights.empty()) {
@@ -418,74 +632,11 @@ void RasterizeTriangleMSAA(
                     const glm::vec3 worldPos = (*worldPositions)[0] * correctedW0
                         + (*worldPositions)[1] * correctedW1
                         + (*worldPositions)[2] * correctedW2;
-
-                    if (light.type() == Light::LightType::Point) {
-                        const glm::vec3 lightToFragment = worldPos - light.position();
-                        if (glm::dot(lightToFragment, lightToFragment) > 1e-12f) {
-                            const int faceIndex = SelectPointShadowFace(lightToFragment);
-                            const int shadowResolution = light.pointShadowResolution();
-                            const std::vector<float>& shadowMap = light.pointLightViewDepths(static_cast<std::size_t>(faceIndex));
-
-                            if (shadowResolution > 0
-                                && shadowMap.size() == static_cast<std::size_t>(shadowResolution) * static_cast<std::size_t>(shadowResolution)) {
-                                glm::vec4 lightSpacePos = light.pointLightSpaceMatrix(static_cast<std::size_t>(faceIndex)) * glm::vec4(worldPos, 1.0f);
-                                if (std::abs(lightSpacePos.w) > 1e-6f) {
-                                    lightSpacePos /= lightSpacePos.w;
-
-                                    const bool outsideLightFrustum =
-                                        (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
-                                        || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
-                                        || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
-                                    if (!outsideLightFrustum) {
-                                        const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowResolution));
-                                        const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowResolution));
-
-                                        if (lx >= 0 && lx < shadowResolution && ly >= 0 && ly < shadowResolution) {
-                                            const size_t shadowIndex = BufferIndex(lx, ly, shadowResolution);
-                                            const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
-                                            const float blockerDepth = shadowMap[shadowIndex];
-                                            const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
-                                            frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        const int shadowWidth = light.shadowMapWidth();
-                        const int shadowHeight = light.shadowMapHeight();
-                        const std::vector<float>& shadowMap = light.lightViewDepths();
-
-                        if (shadowWidth > 0 && shadowHeight > 0
-                            && shadowMap.size() == static_cast<std::size_t>(shadowWidth) * static_cast<std::size_t>(shadowHeight)) {
-                            glm::vec4 lightSpacePos = light.lightSpaceMatrix() * glm::vec4(worldPos, 1.0f);
-                            if (std::abs(lightSpacePos.w) > 1e-6f) {
-                                lightSpacePos /= lightSpacePos.w;
-
-                                const bool outsideLightFrustum =
-                                    (lightSpacePos.x < -1.0f || lightSpacePos.x > 1.0f)
-                                    || (lightSpacePos.y < -1.0f || lightSpacePos.y > 1.0f)
-                                    || (lightSpacePos.z < -1.0f || lightSpacePos.z > 1.0f);
-                                if (!outsideLightFrustum) {
-                                    const int lx = static_cast<int>((lightSpacePos.x + 1.0f) * 0.5f * static_cast<float>(shadowWidth));
-                                    const int ly = static_cast<int>((1.0f - (lightSpacePos.y + 1.0f) * 0.5f) * static_cast<float>(shadowHeight));
-
-                                    if (lx >= 0 && lx < shadowWidth && ly >= 0 && ly < shadowHeight) {
-                                        const size_t shadowIndex = BufferIndex(lx, ly, shadowWidth);
-                                        const float receiverDepth = (lightSpacePos.z + 1.0f) * 0.5f;
-                                        const float blockerDepth = shadowMap[shadowIndex];
-                                        const float bias = std::max(scene.shadowSettings.depthBias, 0.0f);
-                                        frag.shadowVisibility = (receiverDepth - bias > blockerDepth) ? 0.0f : 1.0f;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    frag.shadowVisibility = ComputeShadowVisibility(scene, light, worldPos);
                 }
             }
 
-            // 作用：将当前像素重心坐标对应的世界空间位置与法线写入 Fragment，供光照在世界坐标系计算。
-            // 用法：若调用方提供了 worldPositions/worldNormals，则按重心插值；否则退回到已有法线解析路径。
+            // 将当前像素重心坐标对应的世界空间位置与法线写入 Fragment，供光照在世界坐标系计算。若调用方提供了 worldPositions/worldNormals，则按重心插值；否则退回到已有法线解析路径。
             if (worldPositions != nullptr) {
                 frag.worldPos = (*worldPositions)[0] * correctedW0
                     + (*worldPositions)[1] * correctedW1

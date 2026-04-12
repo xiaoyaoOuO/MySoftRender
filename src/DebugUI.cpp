@@ -11,8 +11,7 @@
 #include <glm/geometric.hpp>
 
 namespace {
-// 作用：把任意方向向量安全归一化，避免零向量导致非法光照方向。
-// 用法：传入 UI 编辑后的方向向量，返回可直接写回 Light 的单位向量。
+// 把任意方向向量安全归一化，避免零向量导致非法光照方向。传入 UI 编辑后的方向向量，返回可直接写回 Light 的单位向量。
 glm::vec3 NormalizeDirectionSafe(const glm::vec3& dir)
 {
     if (glm::dot(dir, dir) <= 1e-10f) {
@@ -21,8 +20,7 @@ glm::vec3 NormalizeDirectionSafe(const glm::vec3& dir)
     return glm::normalize(dir);
 }
 
-// 作用：对缩放值做下限保护，避免模型缩放到 0 或负数导致矩阵异常。
-// 用法：在模型缩放 UI 修改后调用，再写回 Object::setScale。
+// 对缩放值做下限保护，避免模型缩放到 0 或负数导致矩阵异常。在模型缩放 UI 修改后调用，再写回 Object::setScale。
 glm::vec3 ClampScaleMin(const glm::vec3& scaleValue)
 {
     constexpr float kMinScale = 0.01f;
@@ -117,11 +115,36 @@ void DebugUI::drawShadowPanel(Scene& scene)
             ImGui::Checkbox("Enable ShadowMap", &scene.shadowSettings.enableShadowMap);
             ImGui::SliderInt("Shadow Resolution", &scene.shadowSettings.shadowMapResolution, 128, 2048);
             ImGui::SliderFloat("Depth Bias", &scene.shadowSettings.depthBias, 0.0f, 0.02f, "%.6f", ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Normal Bias", &scene.shadowSettings.normalBias, 0.0f, 0.1f, "%.5f", ImGuiSliderFlags_Logarithmic);
 
-            // 作用：约束可视化调参结果，避免误设为负值导致阴影测试逻辑反转。
-            // 用法：拖动滑杆后自动进行一次下限保护。
+            const char* filterModeItems[] = {"Hard", "PCF", "PCSS"};
+            int filterMode = static_cast<int>(scene.shadowSettings.filterMode);
+            if (ImGui::Combo("Filter Mode", &filterMode, filterModeItems, IM_ARRAYSIZE(filterModeItems))) {
+                scene.shadowSettings.filterMode = static_cast<ShadowFilterMode>(filterMode);
+            }
+
+            if (scene.shadowSettings.filterMode == ShadowFilterMode::PCF) {
+                ImGui::SeparatorText("PCF");
+                ImGui::SliderInt("PCF Kernel Radius", &scene.shadowSettings.pcfKernelRadius, 1, 8);
+                ImGui::SliderInt("PCF Sample Count", &scene.shadowSettings.pcfSampleCount, 4, 128);
+            }
+
+            if (scene.shadowSettings.filterMode == ShadowFilterMode::PCSS) {
+                ImGui::SeparatorText("PCSS");
+                ImGui::SliderInt("PCSS Blocker Samples", &scene.shadowSettings.pcssBlockerSearchSamples, 4, 128);
+                ImGui::SliderInt("PCSS Filter Samples", &scene.shadowSettings.pcssFilterSamples, 8, 256);
+                ImGui::SliderFloat("PCSS Light Size", &scene.shadowSettings.pcssLightSize, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
+            }
+
+            // 约束可视化调参结果，避免误设为负值导致阴影测试逻辑反转。拖动滑杆后自动进行一次下限保护。
             scene.shadowSettings.depthBias = std::max(scene.shadowSettings.depthBias, 0.0f);
+            scene.shadowSettings.normalBias = std::max(scene.shadowSettings.normalBias, 0.0f);
             scene.shadowSettings.shadowMapResolution = std::max(scene.shadowSettings.shadowMapResolution, 128);
+            scene.shadowSettings.pcfKernelRadius = std::max(scene.shadowSettings.pcfKernelRadius, 1);
+            scene.shadowSettings.pcfSampleCount = std::max(scene.shadowSettings.pcfSampleCount, 1);
+            scene.shadowSettings.pcssBlockerSearchSamples = std::max(scene.shadowSettings.pcssBlockerSearchSamples, 1);
+            scene.shadowSettings.pcssFilterSamples = std::max(scene.shadowSettings.pcssFilterSamples, 1);
+            scene.shadowSettings.pcssLightSize = std::max(scene.shadowSettings.pcssLightSize, 0.0001f);
         }
 
         if (ImGui::CollapsingHeader("Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -176,8 +199,7 @@ void DebugUI::drawShadowPanel(Scene& scene)
                     light.setShadowFarPlane(farPlane);
                 }
 
-                // 作用：一键把光源摆到选中模型前上方，并自动朝向模型中心。
-                // 用法：先在模型区选择对象，再点击按钮可快速得到完整落地阴影。
+                // 一键把光源摆到选中模型前上方，并自动朝向模型中心。先在模型区选择对象，再点击按钮可快速得到完整落地阴影。
                 if (!scene.objects.empty()
                     && selectedObjectIndex_ >= 0
                     && selectedObjectIndex_ < static_cast<int>(scene.objects.size())

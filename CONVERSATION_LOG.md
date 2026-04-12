@@ -559,4 +559,104 @@
 - Experience.md
 - CONVERSATION_LOG.md
 
+## 2026-04-12 会话 035
+
+### 实现功能
+
+- 按需求仅提供 PCF/PCSS 实现文档，不改动渲染逻辑代码。
+- 文档明确给出：
+	- 当前阴影调用链与接入位置；
+	- PCF/PCSS 的实现思路与分阶段落地策略；
+	- 建议新增函数清单（名称、职责、参数建议）；
+	- 具体调用点（重点在 `Rasterizer` 阴影可见性分支）与 `DebugUI` 参数接入点。
+- 文档同时覆盖 Directional 与 Point 两条阴影采样路径，以及 PCSS blocker search / penumbra / 可变核过滤三阶段。
+
+### 修改文件
+
+- PCF_PCSS_IMPLEMENTATION.md
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 036
+
+### 实现功能
+
+- 按需求对 `RasterizeTriangleMSAA` 做“部分函数提取”，减少 if 嵌套层级。
+- 将原先内联在光栅主循环中的阴影判定深层分支拆分为具名函数：
+	- `ProjectWorldPosToShadowTexel`
+	- `ComputeHardShadowVisibilityFromDepthMap`
+	- `ComputePointShadowVisibility`
+	- `ComputeDirectionalShadowVisibility`
+	- `ComputeShadowVisibility`
+- 主流程内改为单行调用 `frag.shadowVisibility = ComputeShadowVisibility(...)`，显著降低分支深度并保持原行为。
+- 完成语法检查与 Debug 构建验证，编译通过。
+
+### 修改文件
+
+- src/Rasterizer.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 037
+
+### 实现功能
+
+- 为 `ShadowSettings` 补全对应的 DebugUI 控件接入（位于 Shadow Settings 面板）：
+	- 新增 `Normal Bias` 滑杆。
+	- 新增 `Filter Mode`（Hard / PCF / PCSS）切换。
+	- 新增 PCF 参数控件：`PCF Kernel Radius`、`PCF Sample Count`。
+	- 新增 PCSS 参数控件：`PCSS Blocker Samples`、`PCSS Filter Samples`、`PCSS Light Size`。
+- 增加参数下限保护，防止运行时出现非法值（负 bias、0 采样等）。
+- 完成静态错误检查与 Debug 构建验证，编译通过。
+
+### 修改文件
+
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 038
+
+### 实现功能
+
+- 修复 `src/Rasterizer.cpp` 中阴影修复补丁误落位导致的语法/作用域损坏，恢复线框光栅函数结构。
+- 在 `ComputeShadowVisibilityFromDepthMap` 内落实 PCF 边界采样修复：
+	- 增加阴影贴图尺寸保护（宽高与缓存长度）。
+	- PCF 核采样使用边界钳制，保持分子/分母统计一致。
+	- 阴影可见性结果统一钳制到 `[0,1]`。
+- 完成构建验证：`cmake build` 与 `cmake build release` 均编译通过。
+- 按规范补充故障复盘记录到 `Experience.md`。
+
+### 修改文件
+
+- src/Rasterizer.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-12 会话 039
+
+### 实现功能
+
+- 按最新注释规范，完成全项目 `src/` 与 `include/` 下 `// 作用：`、`// 用法：` 风格注释的彻底清理。
+- 对成对出现的“作用/用法”注释统一合并为一行中文说明，改为函数体内可直接阅读的单行解释。
+- 对未成对出现的“作用”或“用法”注释，统一改写为普通中文说明注释，移除旧标签前缀。
+- 完成全量复查，确认代码文件中已无 `// 作用` 或 `// 用法` 残留。
+- 完成 Debug 构建验证，工程编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- src/Light.cpp
+- src/DebugUI.cpp
+- src/Rasterizer.cpp
+- src/software_renderer.cpp
+- src/Texture.cpp
+- include/DebugUI.h
+- include/Light.h
+- include/MeshObject.h
+- include/Object.h
+- include/ObjLoader.h
+- include/Rasterizer.h
+- include/Scene.h
+- include/software_renderer.h
+- include/Texture.h
+- CONVERSATION_LOG.md
+
 

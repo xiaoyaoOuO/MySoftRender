@@ -7,24 +7,21 @@
 #include <stb_image.h>
 
 namespace {
-// 作用：提取浮点数的小数部分，用于 U 坐标环绕采样。
-// 用法：传入任意实数，返回 [0,1) 范围的小数部分。
+// 提取浮点数的小数部分，用于 U 坐标环绕采样。传入任意实数，返回 [0,1) 范围的小数部分。
 float Fract(float value)
 {
     return value - std::floor(value);
 }
 }
 
-// 作用：把 [0,1] 浮点通道值量化为 8-bit 通道值。
-// 用法：内部用于纹理生成写入，超范围输入会先做钳制。
+// 把 [0,1] 浮点通道值量化为 8-bit 通道值。内部用于纹理生成写入，超范围输入会先做钳制。
 std::uint8_t Texture2D::toByte(float value)
 {
     const float clamped = std::clamp(value, 0.0f, 1.0f);
     return static_cast<std::uint8_t>(std::round(clamped * 255.0f));
 }
 
-// 作用：使用 stb_image 从文件加载图片，并转换为统一的 RGB 三通道格式。
-// 用法：传入文件路径与是否垂直翻转标志，成功返回 true，失败会清空纹理状态。
+// 使用 stb_image 从文件加载图片，并转换为统一的 RGB 三通道格式。传入文件路径与是否垂直翻转标志，成功返回 true，失败会清空纹理状态。
 bool Texture2D::loadFromFile(const std::string& filePath, bool flipVertically)
 {
     stbi_set_flip_vertically_on_load(flipVertically ? 1 : 0);
@@ -52,8 +49,7 @@ bool Texture2D::loadFromFile(const std::string& filePath, bool flipVertically)
     return true;
 }
 
-// 作用：创建棋盘格纹理，作为缺省贴图或调试贴图使用。
-// 用法：传入尺寸、格子边长和两种颜色，函数会覆盖当前像素数据。
+// 创建棋盘格纹理，作为缺省贴图或调试贴图使用。传入尺寸、格子边长和两种颜色，函数会覆盖当前像素数据。
 void Texture2D::createCheckerboard(
     int width,
     int height,
@@ -80,8 +76,7 @@ void Texture2D::createCheckerboard(
     }
 }
 
-// 作用：读取指定像素点颜色，并进行边界钳制与 8-bit 到浮点归一化。
-// 用法：供双线性采样过程调用；若纹理无效则返回洋红色告警值。
+// 读取指定像素点颜色，并进行边界钳制与 8-bit 到浮点归一化。供双线性采样过程调用；若纹理无效则返回洋红色告警值。
 glm::vec3 Texture2D::texel(int x, int y) const
 {
     if (!valid()) {
@@ -98,8 +93,7 @@ glm::vec3 Texture2D::texel(int x, int y) const
         static_cast<float>(pixels_[index + 2]) / 255.0f);
 }
 
-    // 作用：按 UV 坐标执行双线性过滤采样，输出平滑颜色。
-    // 用法：u 方向环绕、v 方向钳制，适合在光栅化阶段按片段 UV 取色。
+    // 按 UV 坐标执行双线性过滤采样，输出平滑颜色。u 方向环绕、v 方向钳制，适合在光栅化阶段按片段 UV 取色。
 glm::vec3 Texture2D::sample(float u, float v) const
 {
     if (!valid()) {

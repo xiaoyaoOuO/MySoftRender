@@ -1,4 +1,4 @@
-﻿#include <SDL2/SDL.h>
+#include <SDL2/SDL.h>
 #include "Scene.h"
 #include "Camera.h"
 #include "Object.h"
@@ -27,8 +27,7 @@ namespace Window{
 }
 
 namespace {
-// 作用：根据可执行文件位置和相对资源路径，解析出可用的资源文件路径。
-// 用法：传入 argv0 与如 assets/... 的相对路径，函数会在常见运行目录层级中自动查找。
+// 根据可执行文件位置和相对资源路径，解析出可用的资源文件路径。传入 argv0 与如 assets/... 的相对路径，函数会在常见运行目录层级中自动查找。
 std::string ResolveAssetPath(const char* argv0, const std::filesystem::path& relativeAssetPath)
 {
     namespace fs = std::filesystem;
@@ -55,22 +54,19 @@ std::string ResolveAssetPath(const char* argv0, const std::filesystem::path& rel
     return relativeAssetPath.string();
 }
 
-// 作用：解析球体纹理路径（earth.jpg）。
-// 用法：程序启动时调用，得到可直接传给 Texture2D::loadFromFile 的路径。
+// 解析球体纹理路径（earth.jpg）。程序启动时调用，得到可直接传给 Texture2D::loadFromFile 的路径。
 std::string ResolveSphereTexturePath(const char* argv0)
 {
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "earth.jpg");
 }
 
-// 作用：解析 Mary 模型纹理路径（MC003_Kozakura_Mari.png）。
-// 用法：程序启动时调用，得到 Mary 贴图文件的可用路径。
+// 解析 Mary 模型纹理路径（MC003_Kozakura_Mari.png）。程序启动时调用，得到 Mary 贴图文件的可用路径。
 std::string ResolveMaryTexturePath(const char* argv0)
 {
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "mary" / "MC003_Kozakura_Mari.png");
 }
 
-// 作用：解析 Mary 模型几何文件路径（mary.obj）。
-// 用法：创建场景前调用，得到 OBJ 文件路径用于加载网格。
+// 解析 Mary 模型几何文件路径（mary.obj）。创建场景前调用，得到 OBJ 文件路径用于加载网格。
 std::string ResolveMaryObjPath(const char* argv0)
 {
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "mary" / "mary.obj");
@@ -81,8 +77,7 @@ std::string ResolveFloorPath(const char* argv0)
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "floor" / "floor.obj");
 }
 
-// 作用：按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。
-// 用法：每次按键触发时传入当前档位，返回下一个可用档位。
+// 按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。每次按键触发时传入当前档位，返回下一个可用档位。
 int NextMsaaSampleCount(int currentSampleCount)
 {
     if (currentSampleCount <= 1) {
@@ -94,8 +89,7 @@ int NextMsaaSampleCount(int currentSampleCount)
     return 1;
 }
 
-// 作用：根据事件驱动维护的按键状态，执行 FPS 相机 WASD 平面移动。
-// 用法：主循环中持续传入当前 W/A/S/D 是否按下与 deltaTime，即可得到稳定的连续移动。
+// 根据事件驱动维护的按键状态，执行 FPS 相机 WASD 平面移动。主循环中持续传入当前 W/A/S/D 是否按下与 deltaTime，即可得到稳定的连续移动。
 void MoveCameraWithInput(
     Camera& camera,
     bool moveForward,
@@ -104,8 +98,7 @@ void MoveCameraWithInput(
     bool moveRight,
     float deltaTime)
 {
-    // 作用：将相机前向向量投影到水平面，构建 FPS 常见的“只在地面平移”的移动基。
-    // 用法：每帧传入按键布尔状态与 deltaTime，即可得到与帧率无关的 WASD 位移。
+    // 将相机前向向量投影到水平面，构建 FPS 常见的“只在地面平移”的移动基。每帧传入按键布尔状态与 deltaTime，即可得到与帧率无关的 WASD 位移。
     const glm::vec3 rawForward = camera.target() - camera.position();
     if (glm::dot(rawForward, rawForward) <= 1e-8f) {
         return;
@@ -140,8 +133,7 @@ void MoveCameraWithInput(
     }
 }
 
-// 作用：从当前相机朝向反解出 yaw/pitch 角，便于鼠标视角控制从现有视角连续接管。
-// 用法：场景初始化完成后调用一次，得到可直接用于 FPS 鼠标控制的初始角度。
+// 从当前相机朝向反解出 yaw/pitch 角，便于鼠标视角控制从现有视角连续接管。场景初始化完成后调用一次，得到可直接用于 FPS 鼠标控制的初始角度。
 void ExtractYawPitchFromCamera(const Camera& camera, float& yawDeg, float& pitchDeg)
 {
     const glm::vec3 rawForward = camera.target() - camera.position();
@@ -156,8 +148,7 @@ void ExtractYawPitchFromCamera(const Camera& camera, float& yawDeg, float& pitch
     yawDeg = glm::degrees(std::atan2(forward.x, -forward.z));
 }
 
-// 作用：根据 yaw/pitch 角重建相机前向与上方向，形成标准 FPS 视角。
-// 用法：在鼠标移动后更新 yaw/pitch 并调用该函数，即可实现稳定的水平转向与俯仰。
+// 根据 yaw/pitch 角重建相机前向与上方向，形成标准 FPS 视角。在鼠标移动后更新 yaw/pitch 并调用该函数，即可实现稳定的水平转向与俯仰。
 void ApplyYawPitchToCamera(Camera& camera, float yawDeg, float pitchDeg)
 {
     const float yawRad = glm::radians(yawDeg);
@@ -227,8 +218,7 @@ void SetMouseCaptureState(
 }
 }
 
-// 作用：构建场景对象，并将纹理按对象维度绑定到 Mary 网格对象上。
-// 用法：调用时传入已加载好的共享纹理和 OBJ 路径，后续渲染按单网格对象统一遍历索引绘制。
+// 构建场景对象，并将纹理按对象维度绑定到 Mary 网格对象上。调用时传入已加载好的共享纹理和 OBJ 路径，后续渲染按单网格对象统一遍历索引绘制。
 void CreateScene(
     Scene& scene,
     const std::shared_ptr<Texture2D>& sphereTexture,
@@ -238,8 +228,7 @@ void CreateScene(
 {
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
-    // 作用：降低环境光，给漫反射/高光留出可见对比空间。
-    // 用法：当需要更明显观察 Blinn-Phong 光照层次时，可将环境光强度保持在较低水平。
+    // 降低环境光，给漫反射/高光留出可见对比空间。当需要更明显观察 Blinn-Phong 光照层次时，可将环境光强度保持在较低水平。
     scene.ambientLightColor = glm::vec3(1.0f);
     scene.ambientLightIntensity = 0.08f;
     // scene.objects.emplace_back(std::make_unique<Triangle>());
@@ -248,8 +237,7 @@ void CreateScene(
     // triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
     // scene.objects.emplace_back(std::move(triangle));
 
-    // 作用：将球体基础反照率设为白色，并绑定纹理，避免“黑色材质看不出受光层次”。
-    // 用法：如果只想看纯色受光，可保留白色并取消纹理绑定。
+    // 将球体基础反照率设为白色，并绑定纹理，避免“黑色材质看不出受光层次”。如果只想看纯色受光，可保留白色并取消纹理绑定。
     // auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.1f, 0.1f, 0.1f));
     // sphere->setTexture(sphereTexture);
     // scene.objects.emplace_back(std::move(sphere));
@@ -282,15 +270,13 @@ void CreateScene(
     }
 
     auto floorObject = std::make_unique<MeshObject>(planeMesh);
-    // 作用：将 floor 缩放并前移到相机前方，避免超大平面跨过相机导致整三角被保守裁剪拒绝。
-    // 用法：当前渲染器未做真实近平面裁剪（仅做 accept/reject）时，需保证地面网格顶点整体位于相机前方。
+    // 将 floor 缩放并前移到相机前方，避免超大平面跨过相机导致整三角被保守裁剪拒绝。当前渲染器未做真实近平面裁剪（仅做 accept/reject）时，需保证地面网格顶点整体位于相机前方。
     floorObject->setScale(glm::vec3(0.08f, 1.0f, 0.08f));
     floorObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
     scene.objects.emplace_back(std::move(floorObject));
 
     // 添加一个点光源。
-    // 作用：点光源可向四周发光，配合 6 面阴影图可得到更自然的局部阴影变化。
-    // 用法：位置放在模型前上方，便于在默认视角下观察完整投影。
+    // 点光源可向四周发光，配合 6 面阴影图可得到更自然的局部阴影变化。位置放在模型前上方，便于在默认视角下观察完整投影。
     auto light = std::make_unique<Light>(
         glm::vec3(0.0f, 2.2f, 0.6f), // position
         glm::vec3(1.0f, 1.0f, 1.0f), // color
@@ -299,21 +285,17 @@ void CreateScene(
         Light::LightType::Point // type
     );
 
-    // 作用：设置点光阴影视锥的深度范围，近平面过小会加重深度精度压力。
-    // 用法：按场景尺寸调节 near/far，默认值保证 Mary 与地面都在可投影范围内。
+    // 设置点光阴影视锥的深度范围，近平面过小会加重深度精度压力。按场景尺寸调节 near/far，默认值保证 Mary 与地面都在可投影范围内。
     light->setShadowNearPlane(0.1f);
     light->setShadowFarPlane(12.0f);
 
-    // 作用：设置点光阴影每个面的分辨率，6 面总开销会随该值平方增长。
-    // 用法：默认 512 可在质量和性能间取得平衡，后续可在 ImGui 调节。
+    // 设置点光阴影每个面的分辨率，6 面总开销会随该值平方增长。默认 512 可在质量和性能间取得平衡，后续可在 ImGui 调节。
     scene.shadowSettings.shadowMapResolution = 512;
 
-    // 作用：将创建好的光源加入场景，供片段着色阶段进行光照计算。
-    // 用法：当前先加入一个点光源，后续可扩展为多光源列表。
+    // 将创建好的光源加入场景，供片段着色阶段进行光照计算。当前先加入一个点光源，后续可扩展为多光源列表。
     scene.lights.emplace_back(std::move(light));
 
-    // 作用：创建光源可视化代理球体，让相机能够直观看到点光源位置。
-    // 用法：代理球每帧同步到点光源坐标，且不参与阴影投射，避免干扰场景阴影结果。
+    // 创建光源可视化代理球体，让相机能够直观看到点光源位置。代理球每帧同步到点光源坐标，且不参与阴影投射，避免干扰场景阴影结果。
     auto lightProxySphere = std::make_unique<Sphere>(0.08f, 1, glm::vec3(1.0f, 0.95f, 0.25f));
     if (!scene.lights.empty() && scene.lights[0]) {
         lightProxySphere->setPosition(scene.lights[0]->position());
@@ -397,8 +379,7 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
             const float distanceToLight = std::max(glm::length(toLight), 1e-4f);
             lightDir = toLight / distanceToLight;
 
-            // 作用：使用更平滑的点光衰减，避免 1/r^2 在中距离下光照过暗看不出层次。
-            // 用法：可按场景尺度调整常数项，当前参数适配本项目默认单位。
+            // 使用更平滑的点光衰减，避免 1/r^2 在中距离下光照过暗看不出层次。可按场景尺度调整常数项，当前参数适配本项目默认单位。
             attenuation = 1.0f / (1.0f + 0.14f * distanceToLight + 0.07f * distanceToLight * distanceToLight);
         }
 
@@ -415,11 +396,10 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
         specularLighting += kSpecularStrength * specularTerm * light.intensity() * attenuation * lightColor;
     }
 
-    // 作用：按标准材质模型组合颜色，漫反射受 albedo 调制，高光独立叠加。
-    // 用法：相比“直接加 albedo”能更明显体现光照方向变化。
+    // 按标准材质模型组合颜色，漫反射受 albedo 调制，高光独立叠加。相比“直接加 albedo”能更明显体现光照方向变化。
     glm::vec3 finalLinear = albedo * diffuseLighting + specularLighting;
-    finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
     finalLinear *= payload.shadowVisibility; // 乘以阴影可见性，模拟简单的阴影效果
+    finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
 
     Color finalColor;
     finalColor.r = static_cast<std::uint8_t>(finalLinear.r * 255.0f);
@@ -557,8 +537,7 @@ int main(int argc, char* argv[])
                 running = false;
             }
 
-            // 作用：将鼠标相对位移转换为 FPS 相机的 yaw/pitch 变化。
-            // 用法：保持窗口聚焦并移动鼠标，即可水平转向与上下俯仰。
+            // 将鼠标相对位移转换为 FPS 相机的 yaw/pitch 变化。保持窗口聚焦并移动鼠标，即可水平转向与上下俯仰。
             if (event.type == SDL_MOUSEMOTION && mouseCaptureEnabled && scene.camera && !debugUI.wantsMouseCapture()) {
                 cameraYawDeg += static_cast<float>(event.motion.xrel) * kMouseSensitivityDegPerPixel;
                 cameraPitchDeg -= static_cast<float>(event.motion.yrel) * kMouseSensitivityDegPerPixel;
@@ -573,8 +552,7 @@ int main(int argc, char* argv[])
                 ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
             }
 
-            // 作用：用 KEYDOWN/KEYUP 维护 WASD 持续按下状态，避免依赖全局键盘状态数组。
-            // 用法：按下时置 true，抬起时置 false，后续移动逻辑直接读取该状态。
+            // 用 KEYDOWN/KEYUP 维护 WASD 持续按下状态，避免依赖全局键盘状态数组。按下时置 true，抬起时置 false，后续移动逻辑直接读取该状态。
             if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !debugUI.wantsKeyboardCapture()) {
                 const bool isKeyDown = (event.type == SDL_KEYDOWN);
                 const SDL_Keycode sym = event.key.keysym.sym;
@@ -596,8 +574,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            // 作用：功能键使用 KEYDOWN 的边沿触发（repeat==0），避免连续触发。
-            // 用法：单击一次 F1/F2/F3/ESC，只会触发一次状态切换或退出。
+            // 功能键使用 KEYDOWN 的边沿触发（repeat==0），避免连续触发。单击一次 F1/F2/F3/ESC，只会触发一次状态切换或退出。
             if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
                 const SDL_Keycode key = event.key.keysym.sym;
 
@@ -648,8 +625,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            // 作用：窗口焦点切换时同步鼠标捕获状态，并重置移动状态。
-            // 用法：失焦时释放鼠标，聚焦时恢复相对模式，避免输入卡键与鼠标漂移。
+            // 窗口焦点切换时同步鼠标捕获状态，并重置移动状态。失焦时释放鼠标，聚焦时恢复相对模式，避免输入卡键与鼠标漂移。
             if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                     moveForward = false;
@@ -685,8 +661,7 @@ int main(int argc, char* argv[])
                 deltaTime);
         }
 
-        // 作用：每帧同步光源代理球位置，确保相机看到的光源标记与真实点光位置一致。
-        // 用法：当 UI 拖动点光源位置时，代理球会在同一帧跟随更新。
+        // 每帧同步光源代理球位置，确保相机看到的光源标记与真实点光位置一致。当 UI 拖动点光源位置时，代理球会在同一帧跟随更新。
         if (!scene.lights.empty()
             && scene.lights[0]
             && scene.lightProxyObjectIndex >= 0

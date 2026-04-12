@@ -106,35 +106,29 @@ public:
     int height() const;
     const std::vector<Fragment>& fragments() const { return fragments_; }
 
-    // 作用：查询是否启用背面剔除。
-    // 用法：返回 true 时，仅保留当前约定的正面三角形参与光栅化。
+    // 查询是否启用背面剔除。返回 true 时，仅保留当前约定的正面三角形参与光栅化。
     bool backfaceCullingEnabled() const { return backfaceCullingEnabled_; }
 
-    // 作用：启用或关闭背面剔除。
-    // 用法：传入 true 开启，false 关闭，可在运行时动态切换观察效果与性能。
+    // 启用或关闭背面剔除。传入 true 开启，false 关闭，可在运行时动态切换观察效果与性能。
     void setBackfaceCullingEnabled(bool enabled) { backfaceCullingEnabled_ = enabled; }
 
-    // 作用：切换背面剔除状态。
-    // 用法：通常绑定热键快速比较剔除开关对帧率和画面的影响。
+    // 切换背面剔除状态。通常绑定热键快速比较剔除开关对帧率和画面的影响。
     void toggleBackfaceCulling() { backfaceCullingEnabled_ = !backfaceCullingEnabled_; }
 
-    // 作用：获取当前 MSAA 采样数档位。
-    // 用法：返回值仅为 1/2/4，用于 UI 展示和调试输出。
+    // 获取当前 MSAA 采样数档位。返回值仅为 1/2/4，用于 UI 展示和调试输出。
     int msaaSampleCount() const { return msaaSampleCount_; }
 
-    // 作用：设置 MSAA 采样数档位。
-    // 用法：支持 1/2/4，传入其它值会自动归一到最近合法档位。
+    // 设置 MSAA 采样数档位。支持 1/2/4，传入其它值会自动归一到最近合法档位。
     void setMsaaSampleCount(int sampleCount);
 
     bool wireframeOverlayEnabled() const { return wireframeOverlayEnabled_; }
     void setWireframeOverlayEnabled(bool enabled) { wireframeOverlayEnabled_ = enabled; }
     void toggleWireframeOverlay() { wireframeOverlayEnabled_ = !wireframeOverlayEnabled_; }
 
-    // 作用：清除帧缓冲和所有相关的状态（如 ZBuffer，片段缓存等）
+    // 清除帧缓冲和所有相关的状态（如 ZBuffer，片段缓存等）
     void Clear();
 
-    // 作用：将三角形执行光栅化并生成可供片段着色器使用的片段数据。
-    // 用法：除屏幕空间 vertices 外，可选传入世界空间位置/法线用于光照计算；texture 为空时走纯色路径。
+    // 将三角形执行光栅化并生成可供片段着色器使用的片段数据。除屏幕空间 vertices 外，可选传入世界空间位置/法线用于光照计算；texture 为空时走纯色路径。
     void Rasterize_Triangle(
         const std::array<Vertex, 3>& vertices,
         const Texture2D* texture = nullptr,

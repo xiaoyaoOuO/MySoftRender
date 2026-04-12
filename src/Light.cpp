@@ -5,8 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace {
-// 作用：对方向向量做安全归一化，避免零向量导致 NaN。
-// 用法：传入可能为零的方向，函数会回退到默认方向再返回单位向量。
+// 对方向向量做安全归一化，避免零向量导致 NaN。传入可能为零的方向，函数会回退到默认方向再返回单位向量。
 glm::vec3 NormalizeDirectionSafe(const glm::vec3& direction)
 {
   const float len2 = glm::dot(direction, direction);
@@ -78,23 +77,20 @@ void Light::setShadowFarPlane(float farPlane)
 
 void Light::setShadowMapSize(int width, int height)
 {
-  // 作用：对阴影贴图尺寸做非负裁剪，避免后续采样阶段出现非法索引。
-  // 用法：第一 Pass 生成阴影图后更新，第二 Pass 直接读取该尺寸。
+  // 对阴影贴图尺寸做非负裁剪，避免后续采样阶段出现非法索引。第一 Pass 生成阴影图后更新，第二 Pass 直接读取该尺寸。
   shadowMapWidth_ = std::max(width, 0);
   shadowMapHeight_ = std::max(height, 0);
 }
 
 void Light::setPointShadowResolution(int resolution)
 {
-  // 作用：限制点光阴影分辨率下限，避免出现 0 尺寸深度图。
-  // 用法：UI 或渲染流程设置分辨率后调用，后续第一 Pass 会按该值分配 6 面深度缓存。
+  // 限制点光阴影分辨率下限，避免出现 0 尺寸深度图。UI 或渲染流程设置分辨率后调用，后续第一 Pass 会按该值分配 6 面深度缓存。
   pointShadowResolution_ = std::max(resolution, 16);
 }
 
 const glm::mat4& Light::pointLightSpaceMatrix(std::size_t faceIndex) const
 {
-  // 作用：越界访问保护，避免非法面索引导致数组越界。
-  // 用法：外部传入 0~5 的面索引，越界时回退到 0 号面。
+  // 越界访问保护，避免非法面索引导致数组越界。外部传入 0~5 的面索引，越界时回退到 0 号面。
   const std::size_t safeFace = (faceIndex < kPointShadowFaceCount) ? faceIndex : 0U;
   return pointLightSpaceMatrices_[safeFace];
 }
@@ -134,8 +130,7 @@ void Light::updateShadowMatrices()
   }
 
   if (type_ == LightType::Point) {
-    // 作用：为点光源构建 90 度透视投影，用于立方体 6 面阴影深度。
-    // 用法：每次光源位置/阴影近平远平面更新后自动刷新。
+    // 为点光源构建 90 度透视投影，用于立方体 6 面阴影深度。每次光源位置/阴影近平远平面更新后自动刷新。
     lightProjectionMatrix_ = glm::perspective(glm::radians(90.0f), 1.0f, shadowNearPlane_, shadowFarPlane_);
 
     const std::array<glm::vec3, kPointShadowFaceCount> faceDirections = {
@@ -167,8 +162,7 @@ void Light::updateShadowMatrices()
     return;
   }
 
-  // 作用：Spot 光源暂用单视角透视矩阵路径，保持接口完整性。
-  // 用法：当 type 为 Spot 时，沿 direction_ 方向构建单张阴影投影。
+  // Spot 光源暂用单视角透视矩阵路径，保持接口完整性。当 type 为 Spot 时，沿 direction_ 方向构建单张阴影投影。
   const glm::vec3 lightTarget = position_ + lightDir;
   const glm::vec3 worldUp = (std::abs(glm::dot(lightDir, glm::vec3(0.0f, 1.0f, 0.0f))) > 0.98f)
     ? glm::vec3(0.0f, 0.0f, 1.0f)

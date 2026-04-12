@@ -116,8 +116,7 @@ bool ProjectTriangleToTarget(const glm::mat4& mvp, std::array<Vertex, 3>& vertic
 
     glm::vec4 ndcVertices[3];
     for (int i = 0; i < 3; ++i) {
-        // 作用：缓存 1/w 供主 Pass 做透视校正插值，避免 worldPos/UV 随相机移动产生游动。
-        // 用法：该字段会在光栅化阶段参与重心插值修正。
+        // 缓存 1/w 供主 Pass 做透视校正插值，避免 worldPos/UV 随相机移动产生游动。该字段会在光栅化阶段参与重心插值修正。
         vertices[i].invW = 1.0f / clipVertices[i].w;
         ndcVertices[i] = clipVertices[i] / clipVertices[i].w;
     }
@@ -294,8 +293,7 @@ void RasterizeObjectShadowTriangles(
 
 
 bool SoftwareRenderer::projectLocalTriangleToScreen(const glm::mat4& mvp,std::array<Vertex, 3>& vertices) {
-    // 作用：在齐次除法前做保守裁剪拒绝，避免相机后方几何被镜像到屏幕前方。
-    // 用法：先在裁剪空间检查 w 与六个裁剪平面，任一拒绝条件命中则直接丢弃该三角形。
+    // 在齐次除法前做保守裁剪拒绝，避免相机后方几何被镜像到屏幕前方。先在裁剪空间检查 w 与六个裁剪平面，任一拒绝条件命中则直接丢弃该三角形。
     glm::vec4 clipVertices[3];
     for (int i = 0; i < 3; ++i) {
         clipVertices[i] = mvp * glm::vec4(vertices[i].position, 1.0f);
@@ -314,8 +312,7 @@ bool SoftwareRenderer::projectLocalTriangleToScreen(const glm::mat4& mvp,std::ar
 
     glm::vec4 ndcVertices[3];
     for (int i = 0; i < 3; ++i) {
-        // 作用：缓存当前顶点投影后的 1/w，供片段阶段做透视正确的属性插值。
-        // 用法：后续 worldPos/normal/UV 插值应基于该值修正，避免阴影与纹理随视角漂移。
+        // 缓存当前顶点投影后的 1/w，供片段阶段做透视正确的属性插值。后续 worldPos/normal/UV 插值应基于该值修正，避免阴影与纹理随视角漂移。
         vertices[i].invW = 1.0f / clipVertices[i].w;
         ndcVertices[i] = clipVertices[i] / clipVertices[i].w;
     }
@@ -475,8 +472,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     {
 
         if (mainLight->type() == Light::LightType::Point) {
-            // 作用：点光源阴影使用 6 面深度图，每个面独立投影与写入深度。
-            // 用法：按 shadowMapResolution 分配每面缓存，并对 6 个面循环执行阴影 pass。
+            // 点光源阴影使用 6 面深度图，每个面独立投影与写入深度。按 shadowMapResolution 分配每面缓存，并对 6 个面循环执行阴影 pass。
             const int pointShadowResolution = std::max(scene.shadowSettings.shadowMapResolution, 16);
             mainLight->setPointShadowResolution(pointShadowResolution);
 
@@ -502,8 +498,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 }
             }
         } else {
-            // 作用：方向光路径继续使用单张 2D 深度图，与已有阴影流程兼容。
-            // 用法：按当前渲染分辨率分配缓存，使用 lightSpaceMatrix 做一次阴影 pass。
+            // 方向光路径继续使用单张 2D 深度图，与已有阴影流程兼容。按当前渲染分辨率分配缓存，使用 lightSpaceMatrix 做一次阴影 pass。
             const int shadowWidth = width_;
             const int shadowHeight = height_;
             mainLight->setShadowMapSize(shadowWidth, shadowHeight);

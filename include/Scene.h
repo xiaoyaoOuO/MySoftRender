@@ -8,8 +8,7 @@
 using std::vector;
 using std::unique_ptr;  
 
-// 作用：定义阴影过滤模式。
-// 用法：当前先实现 Hard，PCF/PCSS 先保留分支入口，便于后续逐步补全算法。
+// 定义阴影过滤模式。当前先实现 Hard，PCF/PCSS 先保留分支入口，便于后续逐步补全算法。
 enum class ShadowFilterMode
 {
     Hard = 0,
@@ -17,8 +16,7 @@ enum class ShadowFilterMode
     PCSS = 2
 };
 
-// 作用：集中管理阴影渲染参数，避免参数分散在主循环和渲染器内部。
-// 用法：运行时可通过调试面板修改本结构字段，下一帧立即生效。
+// 集中管理阴影渲染参数，避免参数分散在主循环和渲染器内部。运行时可通过调试面板修改本结构字段，下一帧立即生效。
 struct ShadowSettings
 {
     bool enableShadowMap = true;
