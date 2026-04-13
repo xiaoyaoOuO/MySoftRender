@@ -366,6 +366,8 @@ SoftwareRenderer::SoftwareRenderer(int width, int height)
     : width_(width), height_(height), rasterizer_(width, height)
 {
     colorBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
+    threadCount = std::thread::hardware_concurrency();
+    workerThreads.resize(threadCount);
 }
 
 void SoftwareRenderer::clear(const Color& color)
@@ -539,7 +541,46 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
             }
 
             const ObjMeshData& mesh = meshObject->mesh();
-            for (const glm::uvec3& face : mesh.indices) {
+
+            // //多线程
+            // const int threadCount = std::thread::hardware_concurrency();
+            // std::vector<std::thread> workerThreads(threadCount);
+            // for(int i=0;i<threadCount;++i)
+            // {
+            //     workerThreads[i] = std::thread([&, i]()
+            //     {
+            //         size_t totalFaces = mesh.indices.size();
+            //         size_t facesPerThread = (totalFaces + threadCount - 1) / threadCount;
+            //         size_t startFace = i * facesPerThread;
+            //         size_t endFace = std::min(startFace + facesPerThread, totalFaces);
+
+            //         for (size_t faceIndex = startFace; faceIndex < endFace; ++faceIndex) {
+            //             const glm::uvec3& face = mesh.indices[faceIndex];
+            //             std::array<Vertex, 3> localVertices;
+            //             bool faceValid = true;
+            //             for (int j = 0; j < 3; ++j) {
+            //                 const std::uint32_t vertexIndex = face[j];
+            //                 if (vertexIndex >= mesh.vertices.size()) {
+            //                     faceValid = false;
+            //                     break;
+            //                 }
+            //                 localVertices[j] = mesh.vertices[vertexIndex];
+            //             }
+            //             if (!faceValid) {
+            //                 continue;
+            //             }
+            //             rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
+            //         }
+            //     });
+            // }
+            // for (auto& thread : workerThreads) {
+            //     if (thread.joinable()) {
+            //         thread.join();
+            //     }
+            // }    
+
+            for(auto & face : mesh.indices)
+            {
                 std::array<Vertex, 3> localVertices;
                 bool faceValid = true;
                 for (int i = 0; i < 3; ++i) {
@@ -611,12 +652,39 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     }
 
     //Fragment Shader：遍历光栅化阶段生成的片段，进行深度测试和颜色写入。
-    for(const auto& frag : rasterizer_.fragments())
+    // for(const auto& frag : rasterizer_.fragments())
+    // {
+    //     if (fragmentShader_) {
+    //         fragmentShader_(colorBuffer_, frag, scene);
+    //     } else {
+    //         putPixel(frag.bufferIndex, frag.color);
+    //     }
+    // }
+
+    //多线程进行片段处理
+    const auto& fragments = rasterizer_.fragments();
+    for(int i=0;i<threadCount;++i)
     {
-        if (fragmentShader_) {
-            fragmentShader_(colorBuffer_, frag, scene);
-        } else {
-            putPixel(frag.bufferIndex, frag.color);
+        workerThreads[i] = std::thread([&, i]()
+        {
+            size_t totalFragments = fragments.size();
+            size_t fragmentsPerThread = (totalFragments + threadCount - 1) / threadCount;
+            size_t startFrag = i * fragmentsPerThread;
+            size_t endFrag = std::min(startFrag + fragmentsPerThread, totalFragments);
+
+            for (size_t fragIndex = startFrag; fragIndex < endFrag; ++fragIndex) {
+                const Fragment& frag = fragments[fragIndex];
+                if (fragmentShader_) {
+                    fragmentShader_(colorBuffer_, frag, scene);
+                } else {
+                    putPixel(frag.bufferIndex, frag.color);
+                }
+            }
+        });
+    }
+    for (auto& thread : workerThreads) {
+        if (thread.joinable()) {
+            thread.join();
         }
     }
 }

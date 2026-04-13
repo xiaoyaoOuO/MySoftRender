@@ -7,7 +7,7 @@
 #include <vector>
 #include "Scene.h"
 #include "Rasterizer.h"
-
+#include <thread>
 
 /**
  * @brief 软光栅渲染器
@@ -55,6 +55,8 @@ private:
     int height_;
     std::vector<std::uint32_t> colorBuffer_;
 
+    int threadCount;
+    std::vector<std::thread> workerThreads;
 
     Rasterizer rasterizer_;
     std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> fragmentShader_;
