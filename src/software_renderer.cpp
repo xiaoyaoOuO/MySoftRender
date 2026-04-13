@@ -542,43 +542,6 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
 
             const ObjMeshData& mesh = meshObject->mesh();
 
-            // //多线程
-            // const int threadCount = std::thread::hardware_concurrency();
-            // std::vector<std::thread> workerThreads(threadCount);
-            // for(int i=0;i<threadCount;++i)
-            // {
-            //     workerThreads[i] = std::thread([&, i]()
-            //     {
-            //         size_t totalFaces = mesh.indices.size();
-            //         size_t facesPerThread = (totalFaces + threadCount - 1) / threadCount;
-            //         size_t startFace = i * facesPerThread;
-            //         size_t endFace = std::min(startFace + facesPerThread, totalFaces);
-
-            //         for (size_t faceIndex = startFace; faceIndex < endFace; ++faceIndex) {
-            //             const glm::uvec3& face = mesh.indices[faceIndex];
-            //             std::array<Vertex, 3> localVertices;
-            //             bool faceValid = true;
-            //             for (int j = 0; j < 3; ++j) {
-            //                 const std::uint32_t vertexIndex = face[j];
-            //                 if (vertexIndex >= mesh.vertices.size()) {
-            //                     faceValid = false;
-            //                     break;
-            //                 }
-            //                 localVertices[j] = mesh.vertices[vertexIndex];
-            //             }
-            //             if (!faceValid) {
-            //                 continue;
-            //             }
-            //             rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
-            //         }
-            //     });
-            // }
-            // for (auto& thread : workerThreads) {
-            //     if (thread.joinable()) {
-            //         thread.join();
-            //     }
-            // }    
-
             for(auto & face : mesh.indices)
             {
                 std::array<Vertex, 3> localVertices;

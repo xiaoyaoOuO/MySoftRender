@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 
 find_package(SDL2 REQUIRED)
+find_package(Threads REQUIRED)
 if(MINGW AND TARGET SDL2::SDL2)
     get_target_property(SDL2_INTERFACE_INCLUDE_DIRS SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
     if(SDL2_INTERFACE_INCLUDE_DIRS)
@@ -104,6 +105,7 @@ add_executable(mySoftRender
     src/Light.cpp
     src/ObjLoader.cpp
     src/Object.cpp
+    src/RenderThreadPool.cpp
     src/Sphere.cpp
     src/Texture.cpp
     src/Rasterizer.cpp
@@ -114,6 +116,7 @@ target_include_directories(mySoftRender PRIVATE include)
 
 target_link_libraries(mySoftRender PRIVATE
     SDL2::SDL2
+    Threads::Threads
     glm::glm
     stb_image_wrapper
     imgui_sdl

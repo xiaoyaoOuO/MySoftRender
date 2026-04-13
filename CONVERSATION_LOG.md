@@ -659,4 +659,24 @@
 - include/Texture.h
 - CONVERSATION_LOG.md
 
+## 2026-04-13 会话 040
+
+### 实现功能
+
+- 按“仅做模块、不接入渲染调用”的要求，新增独立线程池模块 `RenderThreadPool`。
+- 线程池能力包含：
+	- 任务提交 `enqueue`（返回 `future`）。
+	- 区间并行 `parallelFor(begin, end, chunk)`。
+	- 空闲同步 `waitIdle`、状态查询 `idle/pendingTaskCount`。
+	- 运行期线程数调整 `setThreadCount`。
+- 新模块已加入 CMake 编译目标，但未在渲染流程中调用。
+- 完成构建验证：`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/RenderThreadPool.h
+- src/RenderThreadPool.cpp
+- CMakeLists.txt
+- CONVERSATION_LOG.md
+
 
