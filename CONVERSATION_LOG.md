@@ -679,4 +679,60 @@
 - CMakeLists.txt
 - CONVERSATION_LOG.md
 
+## 2026-04-14 会话 041
+
+### 实现功能
+
+- 说明并示范线程池使用方式：将 `SoftwareRenderer::DrawScene` 的 fragment shading 阶段改为使用 `RenderThreadPool::parallelFor` 分块并行执行。
+- 新增具名上下文 `FragmentShadingContext` 与具名任务函数 `ShadeFragmentRange`，避免在函数内部继续扩展匿名 Lambda。
+- 渲染器内部移除“每帧创建/回收线程”的片元并行路径，改为复用 `fragmentShadingThreadPool_` 常驻工作线程。
+- 保持其余渲染流程（Shadow Pass、几何光栅化）不变，仅将片元阶段切换为线程池示范。
+- 完成构建验证：`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/software_renderer.h
+- src/software_renderer.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-14 会话 042
+
+### 实现功能
+
+- 按要求为线程池实现代码补充中文注释，覆盖构造/析构、线程启停、任务调度、并行分块与空闲同步等核心函数。
+- 在 `RenderThreadPool.cpp` 中为关键并发步骤增加一行解释注释（任务入队、唤醒、异常汇总、活跃线程计数、空闲通知等）。
+- 在 `RenderThreadPool.h` 的 `enqueue` 内联实现中补充关键流程注释，说明 `bind`、`packaged_task`、`future` 与任务唤醒的作用。
+- 完成构建验证：`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/RenderThreadPool.h
+- src/RenderThreadPool.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-14 会话 043
+
+### 实现功能
+
+- 在 DebugUI 中新增 Thread Pool 面板，显示片元线程池关键指标：
+	- Pool Threads（线程池配置线程数）
+	- Active Workers / Pending Tasks（当前活跃线程数与排队任务数）
+	- Dispatched Workers / Scheduled Tasks / Fragments（本帧实际调度线程数、任务数与片元数）
+- 新增 `Enable Fragment Multithreading` 开关，可在运行时切换片元着色多线程/单线程，便于效率对比。
+- 在 `SoftwareRenderer` 中新增片元多线程开关与统计数据结构，并在 `DrawScene` 的 fragment shading 阶段实时更新统计。
+- 在 `RenderThreadPool` 中新增 `activeWorkerCount()` 接口，用于 UI 展示实际运行线程数。
+- 更新主循环 UI 调用签名，向 `DebugUI::drawShadowPanel` 传入 `SoftwareRenderer`。
+- 完成构建验证：`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/RenderThreadPool.h
+- src/RenderThreadPool.cpp
+- include/software_renderer.h
+- src/software_renderer.cpp
+- include/DebugUI.h
+- src/DebugUI.cpp
+- src/main.cpp
+- CONVERSATION_LOG.md
+
 

@@ -1,6 +1,7 @@
 #include "DebugUI.h"
 
 #include "Scene.h"
+#include "software_renderer.h"
 
 #include "imgui.h"
 #include "backends/imgui_impl_sdl2.h"
@@ -101,7 +102,7 @@ void DebugUI::beginFrame()
     ImGui::NewFrame();
 }
 
-void DebugUI::drawShadowPanel(Scene& scene)
+void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
 {
     if (!initialized_ || !visible_) {
         return;
@@ -244,6 +245,29 @@ void DebugUI::drawShadowPanel(Scene& scene)
             } else {
                 ImGui::TextUnformatted("No model in scene.");
             }
+        }
+
+        if (ImGui::CollapsingHeader("Thread Pool", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool enableFragmentMultithreading = renderer.fragmentMultithreadingEnabled();
+            if (ImGui::Checkbox("Enable Fragment Multithreading", &enableFragmentMultithreading)) {
+                renderer.setFragmentMultithreadingEnabled(enableFragmentMultithreading);
+            }
+
+            const FragmentThreadingStats& stats = renderer.fragmentThreadingStats();
+            const unsigned long long poolThreadCount = static_cast<unsigned long long>(stats.poolThreadCount);
+            const unsigned long long activeWorkerCount = static_cast<unsigned long long>(stats.activeWorkerCount);
+            const unsigned long long pendingTaskCount = static_cast<unsigned long long>(stats.pendingTaskCount);
+            const unsigned long long scheduledTaskCount = static_cast<unsigned long long>(stats.scheduledTaskCount);
+            const unsigned long long dispatchedWorkerCount = static_cast<unsigned long long>(stats.dispatchedWorkerCount);
+            const unsigned long long fragmentCount = static_cast<unsigned long long>(stats.fragmentCount);
+
+            // 同时展示线程池“配置状态”和“本帧实际调度结果”，便于快速对比开关前后的效率变化。
+            ImGui::Text("Pool Threads: %llu", poolThreadCount);
+            ImGui::Text("Active Workers (now): %llu", activeWorkerCount);
+            ImGui::Text("Pending Tasks (now): %llu", pendingTaskCount);
+            ImGui::Text("Dispatched Workers (frame): %llu", dispatchedWorkerCount);
+            ImGui::Text("Scheduled Tasks (frame): %llu", scheduledTaskCount);
+            ImGui::Text("Fragments (frame): %llu", fragmentCount);
         }
 
         ImGui::Spacing();

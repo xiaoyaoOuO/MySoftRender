@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 #include <glm/common.hpp>
@@ -288,6 +289,43 @@ void RasterizeObjectShadowTriangles(
         }
     }
 }
+
+/**
+ * @brief 片元着色任务的只读/可写上下文。
+ */
+struct FragmentShadingContext
+{
+    const std::vector<Fragment>* fragments = nullptr;
+    std::vector<std::uint32_t>* colorBuffer = nullptr;
+    const std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)>* fragmentShader = nullptr;
+    const Scene* scene = nullptr;
+};
+
+/**
+ * @brief 执行指定区间的片元着色任务。
+ * @param context 片元着色上下文。
+ * @param beginIndex 区间起始片元索引（包含）。
+ * @param endIndex 区间结束片元索引（不包含）。
+ */
+void ShadeFragmentRange(
+    const FragmentShadingContext& context,
+    std::size_t beginIndex,
+    std::size_t endIndex)
+{
+    if (!context.fragments || !context.colorBuffer || !context.scene) {
+        return;
+    }
+
+    const bool hasFragmentShader = (context.fragmentShader != nullptr) && static_cast<bool>(*context.fragmentShader);
+    for (std::size_t fragIndex = beginIndex; fragIndex < endIndex; ++fragIndex) {
+        const Fragment& frag = (*(context.fragments))[fragIndex];
+        if (hasFragmentShader) {
+            (*(context.fragmentShader))(*(context.colorBuffer), frag, *(context.scene));
+        } else {
+            (*(context.colorBuffer))[frag.bufferIndex] = SoftwareRenderer::packColor(frag.color);
+        }
+    }
+}
 }
 
 
@@ -363,11 +401,10 @@ void SoftwareRenderer::rasterizeLocalTriangle(const glm::mat4& model,const glm::
 
 SoftwareRenderer::SoftwareRenderer(int width, int height)
     // 为每个屏幕坐标分配一个 32 位像素。
-    : width_(width), height_(height), rasterizer_(width, height)
+    : width_(width), height_(height), rasterizer_(width, height), fragmentShadingThreadPool_()
 {
     colorBuffer_.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
-    threadCount = std::thread::hardware_concurrency();
-    workerThreads.resize(threadCount);
+    fragmentThreadingStats_.poolThreadCount = fragmentShadingThreadPool_.threadCount();
 }
 
 void SoftwareRenderer::clear(const Color& color)
@@ -430,6 +467,21 @@ void SoftwareRenderer::setWireframeOverlayEnabled(bool enabled)
 void SoftwareRenderer::toggleWireframeOverlay()
 {
     rasterizer_.toggleWireframeOverlay();
+}
+
+bool SoftwareRenderer::fragmentMultithreadingEnabled() const
+{
+    return fragmentMultithreadingEnabled_;
+}
+
+void SoftwareRenderer::setFragmentMultithreadingEnabled(bool enabled)
+{
+    fragmentMultithreadingEnabled_ = enabled;
+}
+
+const FragmentThreadingStats& SoftwareRenderer::fragmentThreadingStats() const
+{
+    return fragmentThreadingStats_;
 }
 
 std::uint32_t SoftwareRenderer::packColor(const Color& color)
@@ -624,30 +676,55 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     //     }
     // }
 
-    //多线程进行片段处理
+    // 使用线程池并行执行片元着色，避免每帧创建/销毁线程带来的额外开销。
     const auto& fragments = rasterizer_.fragments();
-    for(int i=0;i<threadCount;++i)
-    {
-        workerThreads[i] = std::thread([&, i]()
-        {
-            size_t totalFragments = fragments.size();
-            size_t fragmentsPerThread = (totalFragments + threadCount - 1) / threadCount;
-            size_t startFrag = i * fragmentsPerThread;
-            size_t endFrag = std::min(startFrag + fragmentsPerThread, totalFragments);
+    const std::size_t totalFragments = fragments.size();
 
-            for (size_t fragIndex = startFrag; fragIndex < endFrag; ++fragIndex) {
-                const Fragment& frag = fragments[fragIndex];
-                if (fragmentShader_) {
-                    fragmentShader_(colorBuffer_, frag, scene);
-                } else {
-                    putPixel(frag.bufferIndex, frag.color);
-                }
-            }
-        });
+    fragmentThreadingStats_.fragmentCount = totalFragments;
+    fragmentThreadingStats_.poolThreadCount = fragmentShadingThreadPool_.threadCount();
+    fragmentThreadingStats_.activeWorkerCount = fragmentShadingThreadPool_.activeWorkerCount();
+    fragmentThreadingStats_.pendingTaskCount = fragmentShadingThreadPool_.pendingTaskCount();
+    fragmentThreadingStats_.scheduledTaskCount = 0;
+    fragmentThreadingStats_.dispatchedWorkerCount = 0;
+
+    if (totalFragments == 0) {
+        return;
     }
-    for (auto& thread : workerThreads) {
-        if (thread.joinable()) {
-            thread.join();
-        }
+
+    FragmentShadingContext context;
+    context.fragments = &fragments;
+    context.colorBuffer = &colorBuffer_;
+    context.fragmentShader = &fragmentShader_;
+    context.scene = &scene;
+
+    // 关闭多线程时走单线程路径，便于在 DebugUI 中对比效率。
+    if (!fragmentMultithreadingEnabled_) {
+        fragmentThreadingStats_.scheduledTaskCount = 1;
+        fragmentThreadingStats_.dispatchedWorkerCount = 1;
+        ShadeFragmentRange(context, 0, totalFragments);
+        fragmentThreadingStats_.activeWorkerCount = 0;
+        fragmentThreadingStats_.pendingTaskCount = 0;
+        return;
     }
+
+    const std::size_t workerCount = std::max<std::size_t>(1, fragmentShadingThreadPool_.threadCount());
+    const std::size_t minChunkSize = std::max<std::size_t>(static_cast<std::size_t>(256), totalFragments / (workerCount * 4));
+    const std::size_t taskCount = (totalFragments + minChunkSize - 1) / minChunkSize;
+
+    fragmentThreadingStats_.scheduledTaskCount = taskCount;
+    fragmentThreadingStats_.dispatchedWorkerCount = std::min(workerCount, taskCount);
+
+    fragmentShadingThreadPool_.parallelFor(
+        0,
+        totalFragments,
+        minChunkSize,
+        std::bind(
+            ShadeFragmentRange,
+            std::cref(context),
+            std::placeholders::_1,
+            std::placeholders::_2));
+
+    // 任务提交并等待完成后，刷新一次线程池即时状态用于 UI 展示。
+    fragmentThreadingStats_.activeWorkerCount = fragmentShadingThreadPool_.activeWorkerCount();
+    fragmentThreadingStats_.pendingTaskCount = fragmentShadingThreadPool_.pendingTaskCount();
 }

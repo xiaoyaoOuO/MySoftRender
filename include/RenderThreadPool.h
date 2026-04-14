@@ -37,31 +37,31 @@ public:
     /**
      * @brief 动态调整线程池工作线程数量。
      * @param threadCount 新线程数量，传入 0 时自动使用硬件并发数。
-     * @return 无返回值。
      */
     void setThreadCount(std::size_t threadCount);
 
     /**
      * @brief 获取当前线程池工作线程数量。
-     * @return 返回线程数量。
      */
     std::size_t threadCount() const;
 
     /**
      * @brief 获取待执行任务队列中的任务数量。
-     * @return 返回尚未被工作线程取走的任务数。
      */
     std::size_t pendingTaskCount() const;
 
     /**
+     * @brief 获取当前正在执行任务的工作线程数量。
+     */
+    std::size_t activeWorkerCount() const;
+
+    /**
      * @brief 判断线程池是否空闲（无排队任务且无正在执行任务）。
-     * @return 空闲返回 true，否则返回 false。
      */
     bool idle() const;
 
     /**
      * @brief 阻塞等待直到线程池进入空闲状态。
-     * @return 无返回值。
      */
     void waitIdle();
 
@@ -83,7 +83,6 @@ public:
      * @param end 结束索引（不包含）。
      * @param minChunkSize 每个任务最小分块大小，传入 0 会自动按 1 处理。
      * @param rangeTask 区间任务函数，参数为 [rangeBegin, rangeEnd)。
-     * @return 无返回值。
      */
     void parallelFor(
         std::size_t begin,
@@ -102,19 +101,16 @@ private:
     /**
      * @brief 启动指定数量的工作线程。
      * @param threadCount 待启动线程数量。
-     * @return 无返回值。
      */
     void StartWorkers(std::size_t threadCount);
 
     /**
      * @brief 停止并回收全部工作线程。
-     * @return 无返回值。
      */
     void StopWorkers();
 
     /**
      * @brief 工作线程主循环，负责取任务并执行。
-     * @return 无返回值。
      */
     void WorkerLoop();
 
@@ -136,7 +132,9 @@ auto RenderThreadPool::enqueue(Func&& func, Args&&... args)
 {
     using ReturnType = std::invoke_result_t<Func, Args...>;
 
+    // 先绑定调用目标与参数，统一为无参可调用对象，便于后续放入任务队列。
     auto boundTask = std::bind(std::forward<Func>(func), std::forward<Args>(args)...);
+    // 使用 packaged_task 承载任务执行结果，调用方通过 future 获取返回值或异常。
     auto packagedTask = std::make_shared<std::packaged_task<ReturnType()>>(std::move(boundTask));
     std::future<ReturnType> future = packagedTask->get_future();
 
@@ -152,6 +150,7 @@ auto RenderThreadPool::enqueue(Func&& func, Args&&... args)
         });
     }
 
+    // 入队后唤醒一个工作线程，尽快消费新任务。
     taskCv_.notify_one();
     return future;
 }

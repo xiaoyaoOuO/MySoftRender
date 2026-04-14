@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 
 class Scene;
+class SoftwareRenderer;
 
 // 封装 ImGui 调试界面的生命周期与绘制流程，避免把 UI 细节耦合到主循环。主程序按 initialize -> processEvent -> beginFrame -> drawShadowPanel -> render 的顺序调用。
 class DebugUI
@@ -23,8 +24,8 @@ public:
     // 开始新的 ImGui 帧。每帧绘制 UI 前调用一次。
     void beginFrame();
 
-    // 绘制调试面板（阴影参数、光源参数、模型位姿）。每帧在 beginFrame 之后调用，可实时修改 Scene 内各项渲染与场景参数。
-    void drawShadowPanel(Scene& scene);
+    // 绘制调试面板（阴影参数、光源参数、模型位姿、线程池状态）。每帧在 beginFrame 之后调用，可实时修改 Scene 与 Renderer 相关参数。
+    void drawShadowPanel(Scene& scene, SoftwareRenderer& renderer);
 
     // 提交并渲染 ImGui 绘制数据。在 SDL_RenderCopy 完成后、SDL_RenderPresent 前调用。
     void render();

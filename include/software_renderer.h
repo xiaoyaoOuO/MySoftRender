@@ -7,7 +7,20 @@
 #include <vector>
 #include "Scene.h"
 #include "Rasterizer.h"
-#include <thread>
+#include "RenderThreadPool.h"
+
+/**
+ * @brief 记录片元着色阶段的线程池执行统计信息。
+ */
+struct FragmentThreadingStats
+{
+    std::size_t fragmentCount = 0; // 本帧片元总数
+    std::size_t poolThreadCount = 0; // 线程池配置线程数
+    std::size_t activeWorkerCount = 0; // 当前时刻活跃工作线程数
+    std::size_t pendingTaskCount = 0; // 当前时刻线程池排队任务数
+    std::size_t scheduledTaskCount = 0; // 本帧提交到线程池的任务数
+    std::size_t dispatchedWorkerCount = 0; // 本帧实际参与执行的线程数估计值
+};
 
 /**
  * @brief 软光栅渲染器
@@ -45,6 +58,24 @@ public:
         fragmentShader_ = std::move(shader);
     }
 
+    /**
+     * @brief 查询片元着色是否启用多线程。
+     * @return 启用返回 true，否则返回 false。
+     */
+    bool fragmentMultithreadingEnabled() const;
+
+    /**
+     * @brief 设置片元着色是否启用多线程。
+     * @param enabled true 表示启用线程池并行，false 表示强制单线程执行。
+     */
+    void setFragmentMultithreadingEnabled(bool enabled);
+
+    /**
+     * @brief 获取片元线程池的执行统计快照。
+     * @return 返回最近一帧更新的统计信息。
+     */
+    const FragmentThreadingStats& fragmentThreadingStats() const;
+
     void rasterizeLocalTriangle(const glm::mat4& model,const glm::mat4& mvp,const std::array<Vertex, 3>& localVertices,const Texture2D* texture = nullptr);
     bool projectLocalTriangleToScreen(const glm::mat4& mvp,std::array<Vertex, 3>& vertices);
 
@@ -55,10 +86,10 @@ private:
     int height_;
     std::vector<std::uint32_t> colorBuffer_;
 
-    int threadCount;
-    std::vector<std::thread> workerThreads;
-
     Rasterizer rasterizer_;
+    RenderThreadPool fragmentShadingThreadPool_;
+    bool fragmentMultithreadingEnabled_ = true;
+    FragmentThreadingStats fragmentThreadingStats_;
     std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> fragmentShader_;
 private:
     void putPixel(int x, int y, const Color& color);

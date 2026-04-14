@@ -676,7 +676,7 @@ int main(int argc, char* argv[])
         renderer.DrawScene(scene);
 
         debugUI.beginFrame();
-        debugUI.drawShadowPanel(scene);
+        debugUI.drawShadowPanel(scene, renderer);
 
         if (SDL_UpdateTexture(
                 framebufferTexture,
