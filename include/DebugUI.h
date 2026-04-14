@@ -40,9 +40,20 @@ public:
     // 查询 ImGui 是否希望接管当前帧键盘输入。主程序可据此屏蔽 WASD/F 键等业务键位逻辑。
     bool wantsKeyboardCapture() const;
 
+    // 设置当前场景预设索引。主程序在场景切换成功后调用，用于同步下拉框显示状态。
+    void setCurrentScenePreset(int presetIndex);
+
+    // 查询是否存在待处理的场景切换请求。返回 true 表示本帧 UI 发起了切换。
+    bool hasPendingSceneSwitch() const;
+
+    // 消费并返回一次场景切换请求。无请求时返回 -1。
+    int consumePendingSceneSwitch();
+
 private:
     SDL_Renderer* renderer_ = nullptr;
     bool initialized_ = false;
     bool visible_ = true;
     int selectedObjectIndex_ = 0;
+    int currentScenePreset_ = 0;
+    int pendingScenePreset_ = -1;
 };

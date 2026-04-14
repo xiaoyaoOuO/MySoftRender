@@ -218,93 +218,205 @@ void SetMouseCaptureState(
 }
 }
 
-// 构建场景对象，并将纹理按对象维度绑定到 Mary 网格对象上。调用时传入已加载好的共享纹理和 OBJ 路径，后续渲染按单网格对象统一遍历索引绘制。
-void CreateScene(
-    Scene& scene,
-    const std::shared_ptr<Texture2D>& sphereTexture,
-    const std::shared_ptr<Texture2D>& maryTexture,
-    const std::string& maryObjPath,
-    const std::string& floorObjPath)
+/**
+ * @brief 场景预设类型。
+ */
+enum class ScenePreset
 {
+    Scene1MaryFloorPoint = 0,
+    Scene2DualSphereFloorPoint = 1
+};
+
+/**
+ * @brief 场景构建所需的共享资源。
+ */
+struct SceneBuildResources
+{
+    std::shared_ptr<Texture2D> sphereTexture;
+    std::shared_ptr<Texture2D> maryTexture;
+    std::string maryObjPath;
+    std::string floorObjPath;
+};
+
+/**
+ * @brief 将场景预设转为 UI 索引。
+ */
+int ScenePresetToIndex(ScenePreset preset)
+{
+    return static_cast<int>(preset);
+}
+
+/**
+ * @brief 将 UI 索引转为场景预设。
+ */
+ScenePreset ScenePresetFromIndex(int presetIndex)
+{
+    if (presetIndex == 1) {
+        return ScenePreset::Scene2DualSphereFloorPoint;
+    }
+    return ScenePreset::Scene1MaryFloorPoint;
+}
+
+/**
+ * @brief 返回场景预设显示名，用于日志输出。
+ */
+const char* ScenePresetName(ScenePreset preset)
+{
+    if (preset == ScenePreset::Scene2DualSphereFloorPoint) {
+        return "Scene 2: Dual Spheres + Floor + Point Light";
+    }
+    return "Scene 1: Mary + Floor + Point Light";
+}
+
+/**
+ * @brief 重置场景容器并初始化相机与环境光。
+ */
+void ResetSceneState(
+    Scene& scene,
+    const glm::vec3& cameraPosition,
+    const glm::vec3& cameraTarget)
+{
+    scene.objects.clear();
+    scene.lights.clear();
+    scene.lightProxyObjectIndex = -1;
+
     scene.camera = std::make_unique<Camera>();
     scene.camera->setAspectRatio(static_cast<float>(Window::kWindowWidth) / static_cast<float>(Window::kWindowHeight));
-    // 降低环境光，给漫反射/高光留出可见对比空间。当需要更明显观察 Blinn-Phong 光照层次时，可将环境光强度保持在较低水平。
+    scene.camera->setPosition(cameraPosition);
+    scene.camera->setTarget(cameraTarget);
+
     scene.ambientLightColor = glm::vec3(1.0f);
     scene.ambientLightIntensity = 0.08f;
-    // scene.objects.emplace_back(std::make_unique<Triangle>());
-    
-    // auto triangle = std::make_unique<Triangle>();
-    // triangle->setPosition(glm::vec3(-0.5f, 0.0f, -1.0f));
-    // scene.objects.emplace_back(std::move(triangle));
 
-    // 将球体基础反照率设为白色，并绑定纹理，避免“黑色材质看不出受光层次”。如果只想看纯色受光，可保留白色并取消纹理绑定。
-    // auto sphere = std::make_unique<Sphere>(0.45f, 2, glm::vec3(0.1f, 0.1f, 0.1f));
-    // sphere->setTexture(sphereTexture);
-    // scene.objects.emplace_back(std::move(sphere));
+    Scene::instance = &scene;
+}
 
-    // auto cube = std::make_unique<Cube>(glm::vec3(0.0f, 0.0f, -1.5f), glm::vec3(1.0f), glm::vec4(1.0f, 0.8f, 0.8f, 1.0f));
-    // cube->setPosition(glm::vec3(-0.8f, 0.0f, -1.5f));
-    // scene.objects.emplace_back(std::move(cube));
-
-
-    //插入Mary模型
-    ObjMeshData MaryMesh;
-    const bool ok = ObjLoader::LoadFromFile(maryObjPath, MaryMesh);
-    if (!ok || MaryMesh.empty()) {
-        std::cerr << "Failed to load mary.obj: " << maryObjPath << std::endl;
-        return;
-    }
-
-    (void)sphereTexture;
-
-    auto maryObject = std::make_unique<MeshObject>(MaryMesh);
-    maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
-    maryObject->setTexture(maryTexture);
-    scene.objects.emplace_back(std::move(maryObject));
-
-    ObjMeshData planeMesh;
-    const bool ok2 = ObjLoader::LoadFromFile(floorObjPath, planeMesh);
-    if (!ok2 || planeMesh.empty()) {
+/**
+ * @brief 向场景追加地板网格对象。
+ * @return 成功返回 true，失败返回 false。
+ */
+bool AppendFloorObject(
+    Scene& scene,
+    const std::string& floorObjPath,
+    const glm::vec3& floorPosition,
+    const glm::vec3& floorScale)
+{
+    ObjMeshData floorMesh;
+    const bool loadOk = ObjLoader::LoadFromFile(floorObjPath, floorMesh);
+    if (!loadOk || floorMesh.empty()) {
         std::cerr << "Failed to load floor.obj: " << floorObjPath << std::endl;
-        return;
+        return false;
     }
 
-    auto floorObject = std::make_unique<MeshObject>(planeMesh);
-    // 将 floor 缩放并前移到相机前方，避免超大平面跨过相机导致整三角被保守裁剪拒绝。当前渲染器未做真实近平面裁剪（仅做 accept/reject）时，需保证地面网格顶点整体位于相机前方。
-    floorObject->setScale(glm::vec3(0.08f, 1.0f, 0.08f));
-    floorObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    auto floorObject = std::make_unique<MeshObject>(floorMesh);
+    floorObject->setScale(floorScale);
+    floorObject->setPosition(floorPosition);
     scene.objects.emplace_back(std::move(floorObject));
+    return true;
+}
 
-    // 添加一个点光源。
-    // 点光源可向四周发光，配合 6 面阴影图可得到更自然的局部阴影变化。位置放在模型前上方，便于在默认视角下观察完整投影。
+/**
+ * @brief 向场景追加点光源与其可视化代理球。
+ */
+void AppendPointLightAndProxy(
+    Scene& scene,
+    const glm::vec3& lightPosition,
+    const glm::vec3& lightDirection,
+    float lightIntensity)
+{
     auto light = std::make_unique<Light>(
-        glm::vec3(0.0f, 2.2f, 0.6f), // position
-        glm::vec3(1.0f, 1.0f, 1.0f), // color
-        glm::vec3(0.0f, -0.62f, -0.78f), // direction（点光源下仅作调试展示）
-        2.4f, // intensity
-        Light::LightType::Point // type
-    );
+        lightPosition,
+        glm::vec3(1.0f, 1.0f, 1.0f),
+        lightDirection,
+        lightIntensity,
+        Light::LightType::Point);
 
-    // 设置点光阴影视锥的深度范围，近平面过小会加重深度精度压力。按场景尺寸调节 near/far，默认值保证 Mary 与地面都在可投影范围内。
     light->setShadowNearPlane(0.1f);
     light->setShadowFarPlane(12.0f);
-
-    // 设置点光阴影每个面的分辨率，6 面总开销会随该值平方增长。默认 512 可在质量和性能间取得平衡，后续可在 ImGui 调节。
-    scene.shadowSettings.shadowMapResolution = 512;
-
-    // 将创建好的光源加入场景，供片段着色阶段进行光照计算。当前先加入一个点光源，后续可扩展为多光源列表。
     scene.lights.emplace_back(std::move(light));
 
-    // 创建光源可视化代理球体，让相机能够直观看到点光源位置。代理球每帧同步到点光源坐标，且不参与阴影投射，避免干扰场景阴影结果。
     auto lightProxySphere = std::make_unique<Sphere>(0.08f, 1, glm::vec3(1.0f, 0.95f, 0.25f));
-    if (!scene.lights.empty() && scene.lights[0]) {
-        lightProxySphere->setPosition(scene.lights[0]->position());
-    }
+    lightProxySphere->setPosition(lightPosition);
     lightProxySphere->setCastShadow(false);
     scene.lightProxyObjectIndex = static_cast<int>(scene.objects.size());
     scene.objects.emplace_back(std::move(lightProxySphere));
+}
 
-    Scene::instance = &scene; // 设置场景单例实例，供全局访问
+/**
+ * @brief 构建场景 1：Mary 模型 + 地板 + 点光源。
+ */
+void BuildScenePresetOne(Scene& scene, const SceneBuildResources& resources)
+{
+    ResetSceneState(scene, glm::vec3(0.0f, 0.7f, 3.4f), glm::vec3(0.0f, -0.4f, -2.0f));
+
+    ObjMeshData maryMesh;
+    const bool maryLoadOk = ObjLoader::LoadFromFile(resources.maryObjPath, maryMesh);
+    if (!maryLoadOk || maryMesh.empty()) {
+        std::cerr << "Failed to load mary.obj: " << resources.maryObjPath << std::endl;
+        return;
+    }
+
+    auto maryObject = std::make_unique<MeshObject>(maryMesh);
+    maryObject->setPosition(glm::vec3(0.0f, -1.0f, -2.0f));
+    maryObject->setTexture(resources.maryTexture);
+    scene.objects.emplace_back(std::move(maryObject));
+
+    (void)AppendFloorObject(
+        scene,
+        resources.floorObjPath,
+        glm::vec3(0.0f, -1.0f, -2.0f),
+        glm::vec3(0.08f, 1.0f, 0.08f));
+
+    AppendPointLightAndProxy(
+        scene,
+        glm::vec3(0.0f, 2.2f, 0.6f),
+        glm::vec3(0.0f, -0.62f, -0.78f),
+        2.4f);
+}
+
+/**
+ * @brief 构建场景 2：双球体 + 地板 + 中上方点光源。
+ */
+void BuildScenePresetTwo(Scene& scene, const SceneBuildResources& resources)
+{
+    ResetSceneState(scene, glm::vec3(0.0f, 0.9f, 3.8f), glm::vec3(0.0f, -0.2f, -2.0f));
+
+    auto leftSphere = std::make_unique<Sphere>(0.5f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
+    leftSphere->setPosition(glm::vec3(-0.85f, -0.45f, -2.0f));
+    leftSphere->setTexture(resources.sphereTexture);
+    scene.objects.emplace_back(std::move(leftSphere));
+
+    auto rightSphere = std::make_unique<Sphere>(0.5f, 2, glm::vec3(0.95f, 0.95f, 1.0f));
+    rightSphere->setPosition(glm::vec3(0.85f, -0.45f, -2.0f));
+    rightSphere->setTexture(resources.sphereTexture);
+    scene.objects.emplace_back(std::move(rightSphere));
+
+    (void)AppendFloorObject(
+        scene,
+        resources.floorObjPath,
+        glm::vec3(0.0f, -1.0f, -2.0f),
+        glm::vec3(0.08f, 1.0f, 0.08f));
+
+    AppendPointLightAndProxy(
+        scene,
+        glm::vec3(0.0f, 1.75f, -2.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        2.8f);
+}
+
+/**
+ * @brief 按预设构建场景内容。
+ */
+void BuildSceneByPreset(Scene& scene, ScenePreset preset, const SceneBuildResources& resources)
+{
+    if (preset == ScenePreset::Scene2DualSphereFloorPoint) {
+        BuildScenePresetTwo(scene, resources);
+    } else {
+        BuildScenePresetOne(scene, resources);
+    }
+
+    // 保证默认阴影分辨率不低于 512，避免切场景后分辨率过低导致阴影阶梯明显。
+    scene.shadowSettings.shadowMapResolution = std::max(scene.shadowSettings.shadowMapResolution, 512);
 }
 
 /**
@@ -352,8 +464,10 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
         viewDir = glm::normalize(viewDir);
     }
 
-    glm::vec3 diffuseLighting = scene.ambientLightIntensity * ambientColor;
+    glm::vec3 ambientLighting = scene.ambientLightIntensity * ambientColor;
+    glm::vec3 directDiffuseLighting(0.0f);
     glm::vec3 specularLighting(0.0f);
+    glm::vec3 emissiveLighting(0.0f);
 
     constexpr float kShininess = 64.0f;
     constexpr float kSpecularStrength = 0.35f;
@@ -381,6 +495,13 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
 
             // 使用更平滑的点光衰减，避免 1/r^2 在中距离下光照过暗看不出层次。可按场景尺度调整常数项，当前参数适配本项目默认单位。
             attenuation = 1.0f / (1.0f + 0.14f * distanceToLight + 0.07f * distanceToLight * distanceToLight);
+
+            // 给点光源附近片元增加“灯芯自发光”，让光源可视化球体不会因法线和阴影因素变黑。
+            constexpr float kLightCoreRadius = 0.14f;
+            if (distanceToLight < kLightCoreRadius) {
+                const float coreFactor = 1.0f - distanceToLight / kLightCoreRadius;
+                emissiveLighting += lightColor * light.intensity() * coreFactor * 0.65f;
+            }
         }
 
         const float ndotl = std::max(glm::dot(normal, lightDir), 0.0f);
@@ -392,13 +513,15 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
         const float specAngle = std::max(glm::dot(normal, halfDir), 0.0f);
         const float specularTerm = std::pow(specAngle, kShininess);
 
-        diffuseLighting += ndotl * light.intensity() * attenuation * lightColor;
+        directDiffuseLighting += ndotl * light.intensity() * attenuation * lightColor;
         specularLighting += kSpecularStrength * specularTerm * light.intensity() * attenuation * lightColor;
     }
 
-    // 按标准材质模型组合颜色，漫反射受 albedo 调制，高光独立叠加。相比“直接加 albedo”能更明显体现光照方向变化。
-    glm::vec3 finalLinear = albedo * diffuseLighting + specularLighting;
-    finalLinear *= payload.shadowVisibility; // 乘以阴影可见性，模拟简单的阴影效果
+    // 阴影只衰减直射项，环境光与自发光不应被阴影完全压黑。
+    const float shadowVisibility = std::clamp(payload.shadowVisibility, 0.0f, 1.0f);
+    glm::vec3 finalLinear = albedo * ambientLighting;
+    finalLinear += shadowVisibility * (albedo * directDiffuseLighting + specularLighting);
+    finalLinear += emissiveLighting;
     finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
 
     Color finalColor;
@@ -439,7 +562,14 @@ int main(int argc, char* argv[])
     }
 
     Scene scene;
-    CreateScene(scene, sphereTexture, maryTexture, maryObjPath, floorObjPath);
+    SceneBuildResources sceneResources;
+    sceneResources.sphereTexture = sphereTexture;
+    sceneResources.maryTexture = maryTexture;
+    sceneResources.maryObjPath = maryObjPath;
+    sceneResources.floorObjPath = floorObjPath;
+
+    ScenePreset currentScenePreset = ScenePreset::Scene1MaryFloorPoint;
+    BuildSceneByPreset(scene, currentScenePreset, sceneResources);
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     renderer.setBackfaceCullingEnabled(true);
@@ -499,6 +629,7 @@ int main(int argc, char* argv[])
     if (!debugUI.initialize(window, presentRenderer)) {
         std::cerr << "DebugUI init failed, continue without ImGui panel" << '\n';
     }
+    debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
 
     bool running = true;
     const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
@@ -642,6 +773,32 @@ int main(int argc, char* argv[])
 
         if (!running) {
             break;
+        }
+
+        // 在主循环安全点处理场景切换请求，避免在 UI 绘制阶段直接重建场景造成生命周期耦合。
+        if (debugUI.hasPendingSceneSwitch()) {
+            const int requestedPresetIndex = debugUI.consumePendingSceneSwitch();
+            const ScenePreset requestedPreset = ScenePresetFromIndex(requestedPresetIndex);
+            if (requestedPreset != currentScenePreset) {
+                BuildSceneByPreset(scene, requestedPreset, sceneResources);
+                currentScenePreset = requestedPreset;
+                debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+
+                // 切场景后重置连续输入状态，避免沿用旧场景下的按键状态导致相机瞬间漂移。
+                moveForward = false;
+                moveBackward = false;
+                moveLeft = false;
+                moveRight = false;
+
+                if (scene.camera) {
+                    ExtractYawPitchFromCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
+                    ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
+                }
+
+                std::cout << "Scene switched to: " << ScenePresetName(currentScenePreset) << '\n';
+            } else {
+                debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+            }
         }
 
         if (debugUI.wantsKeyboardCapture()) {

@@ -735,4 +735,40 @@
 - src/main.cpp
 - CONVERSATION_LOG.md
 
+## 2026-04-14 会话 044
+
+### 实现功能
+
+- 完成 DebugUI 布局优化：将原单列折叠面板重构为顶部 Scene 区 + Tab 分组（Shadow / Light / Model / Threading / Status），减少纵向滚动并提升高频操作可达性。
+- 在 DebugUI 中新增场景切换下拉框（Scene 1 / Scene 2），并实现“请求-消费”模式：
+	- UI 仅发起切换请求；
+	- 主循环在安全点执行场景重建，避免 UI 层直接管理 Scene 生命周期。
+- 在 `main.cpp` 中新增双场景预设构建：
+	- Scene 1：Mary 模型 + 地板 + 点光源（保持原有场景）；
+	- Scene 2：两个球体 + 地板 + 中上方点光源。
+- 新增统一场景构建入口 `BuildSceneByPreset` 与场景资源结构 `SceneBuildResources`，将场景切换逻辑从渲染循环中解耦。
+- 场景切换后重置相机姿态同步（重新提取并应用 yaw/pitch）并清空 WASD 连续输入状态，确保切换后视角稳定。
+- 完成 Debug 构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/DebugUI.h
+- src/DebugUI.cpp
+- src/main.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-14 会话 045
+
+### 实现功能
+
+- 修复“点光源可视化球体发黑”问题：调整 `BlingPhongShader` 光照合成逻辑。
+- 将阴影可见性从“衰减全部光照”改为“仅衰减直射项”，避免环境光被阴影完全压黑。
+- 为点光源近场片元增加灯芯自发光项（`kLightCoreRadius`），使光源可视化球体在光源中心附近始终保持发亮效果。
+- 完成 Debug 构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- CONVERSATION_LOG.md
+
 

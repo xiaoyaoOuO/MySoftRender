@@ -30,6 +30,12 @@ glm::vec3 ClampScaleMin(const glm::vec3& scaleValue)
         std::max(scaleValue.y, kMinScale),
         std::max(scaleValue.z, kMinScale));
 }
+
+// 约束场景预设索引，避免 UI 状态被非法值污染。
+int ClampScenePresetIndex(int presetIndex)
+{
+    return std::clamp(presetIndex, 0, 1);
+}
 }
 
 DebugUI::~DebugUI()
@@ -109,10 +115,35 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
     }
 
     ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin("Shadow Debug", &visible_)) {
-        if (ImGui::CollapsingHeader("Shadow Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::Begin("Renderer Control", &visible_)) {
+        ImGui::SeparatorText("Scene");
+
+        const char* scenePresetItems[] = {
+            "Scene 1: Mary + Floor + Point Light",
+            "Scene 2: Dual Spheres + Floor + Point Light"
+        };
+
+        int scenePresetIndex = ClampScenePresetIndex(currentScenePreset_);
+        if (ImGui::Combo("Scene Preset", &scenePresetIndex, scenePresetItems, IM_ARRAYSIZE(scenePresetItems))) {
+            // 仅记录切换请求，由主循环在安全点完成场景重建，避免 UI 层直接改写 Scene 生命周期。
+            scenePresetIndex = ClampScenePresetIndex(scenePresetIndex);
+            if (scenePresetIndex != currentScenePreset_) {
+                currentScenePreset_ = scenePresetIndex;
+                pendingScenePreset_ = scenePresetIndex;
+            }
+        }
+
+        ImGui::Text("Objects: %d", static_cast<int>(scene.objects.size()));
+        ImGui::SameLine();
+        ImGui::Text("Lights: %d", static_cast<int>(scene.lights.size()));
+        if (pendingScenePreset_ >= 0) {
+            ImGui::TextUnformatted("Scene switch queued. It will apply this frame.");
+        }
+
+        if (ImGui::BeginTabBar("DebugTabs")) {
+            if (ImGui::BeginTabItem("Shadow")) {
             ImGui::Checkbox("Enable ShadowMap", &scene.shadowSettings.enableShadowMap);
             ImGui::SliderInt("Shadow Resolution", &scene.shadowSettings.shadowMapResolution, 128, 2048);
             ImGui::SliderFloat("Depth Bias", &scene.shadowSettings.depthBias, 0.0f, 0.02f, "%.6f", ImGuiSliderFlags_Logarithmic);
@@ -146,9 +177,10 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
             scene.shadowSettings.pcssBlockerSearchSamples = std::max(scene.shadowSettings.pcssBlockerSearchSamples, 1);
             scene.shadowSettings.pcssFilterSamples = std::max(scene.shadowSettings.pcssFilterSamples, 1);
             scene.shadowSettings.pcssLightSize = std::max(scene.shadowSettings.pcssLightSize, 0.0001f);
-        }
+                ImGui::EndTabItem();
+            }
 
-        if (ImGui::CollapsingHeader("Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginTabItem("Light")) {
             if (!scene.lights.empty() && scene.lights[0]) {
                 Light& light = *scene.lights[0];
 
@@ -213,9 +245,10 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
             } else {
                 ImGui::TextUnformatted("No light in scene.");
             }
-        }
+                ImGui::EndTabItem();
+            }
 
-        if (ImGui::CollapsingHeader("Model Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginTabItem("Model")) {
             if (!scene.objects.empty()) {
                 const int objectCount = static_cast<int>(scene.objects.size());
                 if (selectedObjectIndex_ < 0 || selectedObjectIndex_ >= objectCount) {
@@ -245,9 +278,10 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
             } else {
                 ImGui::TextUnformatted("No model in scene.");
             }
-        }
+                ImGui::EndTabItem();
+            }
 
-        if (ImGui::CollapsingHeader("Thread Pool", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginTabItem("Threading")) {
             bool enableFragmentMultithreading = renderer.fragmentMultithreadingEnabled();
             if (ImGui::Checkbox("Enable Fragment Multithreading", &enableFragmentMultithreading)) {
                 renderer.setFragmentMultithreadingEnabled(enableFragmentMultithreading);
@@ -268,23 +302,55 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
             ImGui::Text("Dispatched Workers (frame): %llu", dispatchedWorkerCount);
             ImGui::Text("Scheduled Tasks (frame): %llu", scheduledTaskCount);
             ImGui::Text("Fragments (frame): %llu", fragmentCount);
-        }
+                ImGui::EndTabItem();
+            }
 
-        ImGui::Spacing();
-        ImGui::TextUnformatted("Hotkeys:");
-        ImGui::BulletText("F4: Toggle this panel");
-        ImGui::BulletText("F5: Toggle mouse capture");
+            if (ImGui::BeginTabItem("Status")) {
+                ImGui::TextUnformatted("Hotkeys:");
+                ImGui::BulletText("F4: Toggle this panel");
+                ImGui::BulletText("F5: Toggle mouse capture");
 
-        if (!scene.lights.empty() && scene.lights[0]) {
-            const auto& light = *scene.lights[0];
-            const auto& lightPos = light.position();
-            const auto& lightDir = light.direction();
-            ImGui::Spacing();
-            ImGui::Text("Main Light Pos: (%.2f, %.2f, %.2f)", lightPos.x, lightPos.y, lightPos.z);
-            ImGui::Text("Main Light Dir: (%.2f, %.2f, %.2f)", lightDir.x, lightDir.y, lightDir.z);
+                if (scene.camera) {
+                    const glm::vec3 cameraPos = scene.camera->position();
+                    const glm::vec3 cameraTarget = scene.camera->target();
+                    ImGui::Spacing();
+                    ImGui::Text("Camera Pos: (%.2f, %.2f, %.2f)", cameraPos.x, cameraPos.y, cameraPos.z);
+                    ImGui::Text("Camera Target: (%.2f, %.2f, %.2f)", cameraTarget.x, cameraTarget.y, cameraTarget.z);
+                }
+
+                if (!scene.lights.empty() && scene.lights[0]) {
+                    const auto& light = *scene.lights[0];
+                    const auto& lightPos = light.position();
+                    const auto& lightDir = light.direction();
+                    ImGui::Spacing();
+                    ImGui::Text("Main Light Pos: (%.2f, %.2f, %.2f)", lightPos.x, lightPos.y, lightPos.z);
+                    ImGui::Text("Main Light Dir: (%.2f, %.2f, %.2f)", lightDir.x, lightDir.y, lightDir.z);
+                }
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
     }
     ImGui::End();
+}
+
+void DebugUI::setCurrentScenePreset(int presetIndex)
+{
+    currentScenePreset_ = ClampScenePresetIndex(presetIndex);
+    pendingScenePreset_ = -1;
+}
+
+bool DebugUI::hasPendingSceneSwitch() const
+{
+    return pendingScenePreset_ >= 0;
+}
+
+int DebugUI::consumePendingSceneSwitch()
+{
+    const int requestedScenePreset = pendingScenePreset_;
+    pendingScenePreset_ = -1;
+    return requestedScenePreset;
 }
 
 void DebugUI::render()
