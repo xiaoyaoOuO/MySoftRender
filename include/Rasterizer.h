@@ -24,6 +24,15 @@ struct Color {
     std::uint8_t a;
 };
 
+/**
+ * @brief 片元类型，用于在着色阶段区分普通表面与天空盒片元。
+ */
+enum class FragmentType
+{
+    Surface = 0,
+    Skybox = 1
+};
+
 struct Fragment
 {
     Vec2 screenPos; // 屏幕空间坐标
@@ -33,6 +42,8 @@ struct Fragment
     glm::vec3 normal; // 法线向量
     glm::vec3 worldPos; // 世界空间位置
     float shadowVisibility = 1.0f; // 阴影可见性（1=全亮，0=全阴影）
+    FragmentType type = FragmentType::Surface; // 片元类型（普通表面/天空盒）
+    glm::vec3 environmentDir = glm::vec3(0.0f, 0.0f, -1.0f); // 环境采样方向（世界空间）
 };
 
 struct Edge {
@@ -584,6 +595,9 @@ public:
     int height() const;
     const std::vector<Fragment>& fragments() const { return fragments_; }
 
+    // 只读访问像素级深度缓冲。后处理阶段可据此判断哪些像素未被几何覆盖。
+    const std::vector<float>& zBuffer() const { return zBuffer_; }
+
     // 查询是否启用背面剔除。返回 true 时，仅保留当前约定的正面三角形参与光栅化。
     bool backfaceCullingEnabled() const { return backfaceCullingEnabled_; }
 
@@ -611,7 +625,9 @@ public:
         const std::array<Vertex, 3>& vertices,
         const Texture2D* texture = nullptr,
         const std::array<glm::vec3, 3>* worldPositions = nullptr,
-        const std::array<glm::vec3, 3>* worldNormals = nullptr);
+        const std::array<glm::vec3, 3>* worldNormals = nullptr,
+        FragmentType fragmentType = FragmentType::Surface,
+        const std::array<glm::vec3, 3>* environmentDirections = nullptr);
 
     // 执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
     template <typename ShadePixelFunc>
@@ -620,6 +636,8 @@ public:
         const std::array<float, 3>& vertexInvW,
         const std::array<glm::vec3, 3>* worldPositions,
         const std::array<glm::vec3, 3>* worldNormals,
+        FragmentType fragmentType,
+        const std::array<glm::vec3, 3>* environmentDirections,
         int activeSampleCount,
         const Vec2* sampleOffsets,
         ShadePixelFunc&& shadePixel);
@@ -653,6 +671,8 @@ void Rasterizer::RasterizeTriangleMSAA(
     const std::array<float, 3>& vertexInvW,
     const std::array<glm::vec3, 3>* worldPositions,
     const std::array<glm::vec3, 3>* worldNormals,
+    FragmentType fragmentType,
+    const std::array<glm::vec3, 3>* environmentDirections,
     int activeSampleCount,
     const Vec2* sampleOffsets,
     ShadePixelFunc&& shadePixel)
@@ -784,9 +804,10 @@ void Rasterizer::RasterizeTriangleMSAA(
             frag.bufferIndex = pixelIndex;
             frag.depth = resolvedDepth;
             frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer_, activeSampleCount));
+            frag.type = fragmentType;
 
             // 根据光源阴影贴图判断当前片段是否被遮挡。将阴影采样逻辑提取到独立函数，减少主光栅化流程中的 if 嵌套层级。
-            if (worldPositions != nullptr && Scene::instance) {
+            if (fragmentType == FragmentType::Surface && worldPositions != nullptr && Scene::instance) {
                 const Scene& scene = *(Scene::instance);
                 if (scene.shadowSettings.enableShadowMap && !scene.lights.empty()) {
                     const Light& light = *scene.lights[0];
@@ -818,6 +839,19 @@ void Rasterizer::RasterizeTriangleMSAA(
                 }
             } else {
                 frag.normal = ResolvePixelNormal(pixelIndex, resolvedDepth, sampleZBuffer_, sampleNormalBuffer_, activeSampleCount);
+            }
+
+            // 对天空盒等环境片元插值世界方向，供片元着色阶段执行立方体贴图采样。
+            if (environmentDirections != nullptr) {
+                glm::vec3 interpolatedDirection = (*environmentDirections)[0] * correctedW0
+                    + (*environmentDirections)[1] * correctedW1
+                    + (*environmentDirections)[2] * correctedW2;
+                const float dirLen2 = glm::dot(interpolatedDirection, interpolatedDirection);
+                if (dirLen2 > 1e-12f) {
+                    frag.environmentDir = glm::normalize(interpolatedDirection);
+                } else {
+                    frag.environmentDir = glm::vec3(0.0f, 0.0f, -1.0f);
+                }
             }
 
             const int fragmentIndex = fragmentLut_[pixelIndex];

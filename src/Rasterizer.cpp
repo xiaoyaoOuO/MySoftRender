@@ -41,7 +41,9 @@ void Rasterizer::Rasterize_Triangle(
     const std::array<Vertex, 3>& vertices,
     const Texture2D* texture,
     const std::array<glm::vec3, 3>* worldPositions,
-    const std::array<glm::vec3, 3>* worldNormals)
+    const std::array<glm::vec3, 3>* worldNormals,
+    FragmentType fragmentType,
+    const std::array<glm::vec3, 3>* environmentDirections)
 {
     // 屏幕空间采用 y 轴向下约定时，约定顺时针为正面。
     const Vec2 s0 = {vertices[0].position.x, vertices[0].position.y};
@@ -106,6 +108,8 @@ void Rasterizer::Rasterize_Triangle(
         vertexInvW,
         worldPositions,
         worldNormals,
+        fragmentType,
+        environmentDirections,
         activeSampleCount,
         sampleOffsets,
         shadePixel);

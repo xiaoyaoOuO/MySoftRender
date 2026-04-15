@@ -1,9 +1,11 @@
 #include "Texture.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <glm/common.hpp>
+#include <glm/geometric.hpp>
 #include <stb_image.h>
 
 namespace {
@@ -11,6 +13,30 @@ namespace {
 float Fract(float value)
 {
     return value - std::floor(value);
+}
+
+/**
+ * @brief 对输入方向做安全归一化，避免零向量导致采样面选择异常。
+ * @param direction 输入方向向量。
+ * @return 归一化后的方向；若输入接近零向量则返回默认朝前方向。
+ */
+glm::vec3 NormalizeDirectionSafe(const glm::vec3& direction)
+{
+    const float len2 = glm::dot(direction, direction);
+    if (len2 <= 1e-12f) {
+        return glm::vec3(0.0f, 0.0f, -1.0f);
+    }
+    return direction * glm::inversesqrt(len2);
+}
+
+/**
+ * @brief 把立方体面枚举转换为数组下标。
+ * @param face 立方体面类型。
+ * @return 对应的 0~5 下标。
+ */
+std::size_t FaceToIndex(TextureCube::Face face)
+{
+    return static_cast<std::size_t>(face);
 }
 }
 
@@ -122,4 +148,99 @@ glm::vec3 Texture2D::sample(float u, float v) const
     const glm::vec3 c0 = glm::mix(c00, c10, tx);
     const glm::vec3 c1 = glm::mix(c01, c11, tx);
     return glm::mix(c0, c1, ty);
+}
+
+// 按 +X/-X/+Y/-Y/+Z/-Z 顺序加载六面图像。仅当六个面全部加载成功时标记为可用。
+bool TextureCube::loadFromFiles(const std::array<std::string, kFaceCount>& filePaths, bool flipVertically)
+{
+    valid_ = true;
+    for (std::size_t i = 0; i < kFaceCount; ++i) {
+        if (!faces_[i].loadFromFile(filePaths[i], flipVertically)) {
+            valid_ = false;
+            break;
+        }
+    }
+    return valid_;
+}
+
+// 生成六个不同主色调的棋盘格面，用于天空盒方向校验和资源缺失回退。
+void TextureCube::createDebugFaces(int faceSize)
+{
+    const int clampedSize = std::max(faceSize, 16);
+    const int tileSize = std::max(clampedSize / 16, 4);
+    const std::array<glm::vec3, kFaceCount> faceColors = {
+        glm::vec3(0.95f, 0.32f, 0.32f),
+        glm::vec3(0.32f, 0.95f, 0.32f),
+        glm::vec3(0.32f, 0.32f, 0.95f),
+        glm::vec3(0.95f, 0.95f, 0.32f),
+        glm::vec3(0.32f, 0.95f, 0.95f),
+        glm::vec3(0.95f, 0.32f, 0.95f)
+    };
+
+    for (std::size_t i = 0; i < kFaceCount; ++i) {
+        const glm::vec3 primary = faceColors[i];
+        const glm::vec3 secondary = glm::clamp(primary * 0.25f + glm::vec3(0.05f), glm::vec3(0.0f), glm::vec3(1.0f));
+        faces_[i].createCheckerboard(clampedSize, clampedSize, tileSize, primary, secondary);
+    }
+
+    valid_ = true;
+}
+
+// 按方向向量选择立方体面并映射为面内 UV，再调用对应 2D 纹理采样。
+glm::vec3 TextureCube::sample(const glm::vec3& direction) const
+{
+    if (!valid_) {
+        return glm::vec3(1.0f, 0.0f, 1.0f);
+    }
+
+    const glm::vec3 dir = NormalizeDirectionSafe(direction);
+    const float absX = std::abs(dir.x);
+    const float absY = std::abs(dir.y);
+    const float absZ = std::abs(dir.z);
+
+    TextureCube::Face face = TextureCube::Face::NegativeZ;
+    float majorAxis = absZ;
+    float sc = 0.0f;
+    float tc = 0.0f;
+
+    // 采用常见 OpenGL 立方体面坐标约定，保证方向向量到面内 UV 的映射稳定可预期。
+    if (absX >= absY && absX >= absZ) {
+        majorAxis = absX;
+        if (dir.x >= 0.0f) {
+            face = TextureCube::Face::PositiveX;
+            sc = -dir.z;
+            tc = -dir.y;
+        } else {
+            face = TextureCube::Face::NegativeX;
+            sc = dir.z;
+            tc = -dir.y;
+        }
+    } else if (absY >= absX && absY >= absZ) {
+        majorAxis = absY;
+        if (dir.y >= 0.0f) {
+            face = TextureCube::Face::PositiveY;
+            sc = dir.x;
+            tc = dir.z;
+        } else {
+            face = TextureCube::Face::NegativeY;
+            sc = dir.x;
+            tc = -dir.z;
+        }
+    } else {
+        majorAxis = absZ;
+        if (dir.z >= 0.0f) {
+            face = TextureCube::Face::PositiveZ;
+            sc = dir.x;
+            tc = -dir.y;
+        } else {
+            face = TextureCube::Face::NegativeZ;
+            sc = -dir.x;
+            tc = -dir.y;
+        }
+    }
+
+    const float safeMajorAxis = std::max(majorAxis, 1e-6f);
+    const float u = 0.5f * (sc / safeMajorAxis + 1.0f);
+    const float v = 0.5f * (tc / safeMajorAxis + 1.0f);
+    return faces_[FaceToIndex(face)].sample(u, v);
 }

@@ -8,6 +8,8 @@
 using std::vector;
 using std::unique_ptr;  
 
+class TextureCube;
+
 // 定义阴影过滤模式。当前先实现 Hard，PCF/PCSS 先保留分支入口，便于后续逐步补全算法。
 enum class ShadowFilterMode
 {
@@ -42,6 +44,13 @@ public:
 
     glm::vec3 ambientLightColor = glm::vec3(1.0f); // 场景的环境光颜色
     float ambientLightIntensity = 0.5f; // 场景的环境光强度
+
+    std::shared_ptr<TextureCube> environmentMap; // 场景环境贴图（用于天空盒与后续 IBL 采样）
+    bool skyboxEnabled = true; // 是否启用天空盒渲染
+    float skyboxIntensity = 1.0f; // 天空盒颜色强度
+    bool enableIblDiffuseStub = false; // 是否启用 IBL 漫反射占位项
+    float iblDiffuseIntensity = 0.25f; // IBL 漫反射占位项强度
+
     ShadowSettings shadowSettings; // 场景阴影配置
     int lightProxyObjectIndex = -1; // 光源可视化代理对象在 objects 中的索引（-1 表示无代理）
 
