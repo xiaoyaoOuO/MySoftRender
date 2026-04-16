@@ -8,10 +8,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
-#include <vector>
 
 #include <glm/common.hpp>
-#include <glm/geometric.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 
 namespace {
@@ -130,140 +128,6 @@ bool ProjectTriangleToTarget(const glm::mat4& mvp, std::array<Vertex, 3>& vertic
         vertices[i].position.z = (ndcVertices[i].z + 1.0f) * 0.5f;
     }
     return true;
-}
-
-/**
- * @brief 判断天空盒视空间射线缓存是否需要重建。
- * @param cache 当前缓存数据。
- * @param width 目标宽度。
- * @param height 目标高度。
- * @param fovYDeg 相机垂直视场角（度）。
- * @param aspect 相机宽高比。
- * @return true 表示缓存失效，需要重建。
- */
-bool ShouldRebuildSkyboxViewRayCache(
-    const std::vector<glm::vec3>& cache,
-    int cacheWidth,
-    int cacheHeight,
-    float cacheFovYDeg,
-    float cacheAspect,
-    int width,
-    int height,
-    float fovYDeg,
-    float aspect)
-{
-    const std::size_t expectedSize = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-    if (cache.size() != expectedSize) {
-        return true;
-    }
-    if (cacheWidth != width || cacheHeight != height) {
-        return true;
-    }
-    if (std::abs(cacheFovYDeg - fovYDeg) > 1e-5f) {
-        return true;
-    }
-    if (std::abs(cacheAspect - aspect) > 1e-6f) {
-        return true;
-    }
-    return false;
-}
-
-/**
- * @brief 生成每像素对应的视空间射线缓存。
- * @param width 目标宽度。
- * @param height 目标高度。
- * @param fovYDeg 相机垂直视场角（度）。
- * @param aspect 相机宽高比。
- * @param outViewRays 输出射线缓存，大小为 width*height。
- */
-void BuildSkyboxViewRayCache(
-    int width,
-    int height,
-    float fovYDeg,
-    float aspect,
-    std::vector<glm::vec3>& outViewRays)
-{
-    const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-    outViewRays.resize(pixelCount);
-
-    const float tanHalfFovY = std::tan(glm::radians(fovYDeg) * 0.5f);
-    const float invWidth = 1.0f / static_cast<float>(std::max(width, 1));
-    const float invHeight = 1.0f / static_cast<float>(std::max(height, 1));
-
-    for (int y = 0; y < height; ++y) {
-        const float ndcY = 1.0f - 2.0f * ((static_cast<float>(y) + 0.5f) * invHeight);
-        for (int x = 0; x < width; ++x) {
-            const float ndcX = 2.0f * ((static_cast<float>(x) + 0.5f) * invWidth) - 1.0f;
-            glm::vec3 ray(
-                ndcX * aspect * tanHalfFovY,
-                ndcY * tanHalfFovY,
-                -1.0f);
-
-            const float len2 = glm::dot(ray, ray);
-            if (len2 > 1e-12f) {
-                ray = ray * glm::inversesqrt(len2);
-            } else {
-                ray = glm::vec3(0.0f, 0.0f, -1.0f);
-            }
-
-            outViewRays[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)] = ray;
-        }
-    }
-}
-
-/**
- * @brief 天空盒背景填充任务上下文。
- */
-struct SkyboxFillContext
-{
-    std::vector<std::uint32_t>* colorBuffer = nullptr;
-    const std::vector<float>* zBuffer = nullptr;
-    const std::vector<glm::vec3>* viewRays = nullptr;
-    glm::mat3 cameraToWorldRotation = glm::mat3(1.0f);
-    const TextureCube* environmentMap = nullptr;
-    float skyboxIntensity = 1.0f;
-};
-
-/**
- * @brief 执行天空盒背景像素填充任务。
- * @param context 填充任务上下文。
- * @param beginIndex 像素起始索引（包含）。
- * @param endIndex 像素结束索引（不包含）。
- */
-void FillSkyboxBackgroundRange(
-    const SkyboxFillContext& context,
-    std::size_t beginIndex,
-    std::size_t endIndex)
-{
-    if (!context.colorBuffer || !context.zBuffer || !context.viewRays || !context.environmentMap) {
-        return;
-    }
-
-    for (std::size_t index = beginIndex; index < endIndex; ++index) {
-        // 使用深度范围判断像素是否被前景覆盖，避免 Release 下 fast-math 对 isfinite 判定的影响。
-        const float pixelDepth = (*(context.zBuffer))[index];
-        if (pixelDepth >= 0.0f && pixelDepth <= 1.0f) {
-            continue;
-        }
-
-        glm::vec3 worldDirection = context.cameraToWorldRotation * (*(context.viewRays))[index];
-        const float len2 = glm::dot(worldDirection, worldDirection);
-        if (len2 > 1e-12f) {
-            worldDirection = worldDirection * glm::inversesqrt(len2);
-        } else {
-            worldDirection = glm::vec3(0.0f, 0.0f, -1.0f);
-        }
-
-        glm::vec3 skyColor = context.environmentMap->sample(worldDirection) * context.skyboxIntensity;
-        skyColor = glm::clamp(skyColor, glm::vec3(0.0f), glm::vec3(1.0f));
-
-        Color packedColor;
-        packedColor.r = static_cast<std::uint8_t>(skyColor.r * 255.0f);
-        packedColor.g = static_cast<std::uint8_t>(skyColor.g * 255.0f);
-        packedColor.b = static_cast<std::uint8_t>(skyColor.b * 255.0f);
-        packedColor.a = 255;
-        (*(context.colorBuffer))[index] = SoftwareRenderer::packColor(packedColor);
-    }
 }
 
 /**
@@ -533,86 +397,6 @@ void SoftwareRenderer::rasterizeLocalTriangle(const glm::mat4& model,const glm::
 
     rasterizer_.Rasterize_Triangle(screenVertices, texture, &worldPositions, &worldNormals);
 };
-
-/**
- * @brief 确保天空盒视空间射线缓存可用，并在参数变化时重建。
- * @param camera 当前相机对象。
- */
-void SoftwareRenderer::ensureSkyboxViewRayCache(const Camera& camera)
-{
-    const float fovYDeg = camera.fovYDeg();
-    const float aspect = camera.aspectRatio();
-    if (!ShouldRebuildSkyboxViewRayCache(
-            skyboxViewRayCache_,
-            skyboxViewRayCacheWidth_,
-            skyboxViewRayCacheHeight_,
-            skyboxViewRayCacheFovYDeg_,
-            skyboxViewRayCacheAspect_,
-            width_,
-            height_,
-            fovYDeg,
-            aspect)) {
-        return;
-    }
-
-    BuildSkyboxViewRayCache(width_, height_, fovYDeg, aspect, skyboxViewRayCache_);
-    skyboxViewRayCacheWidth_ = width_;
-    skyboxViewRayCacheHeight_ = height_;
-    skyboxViewRayCacheFovYDeg_ = fovYDeg;
-    skyboxViewRayCacheAspect_ = aspect;
-}
-
-/**
- * @brief 绘制天空盒背景，仅填充未被前景几何覆盖的像素。
- * @param scene 当前场景对象。
- * @param zBuffer 当前帧像素级深度缓冲。
- */
-void SoftwareRenderer::drawSkybox(const Scene& scene, const std::vector<float>& zBuffer)
-{
-    if (!scene.camera || !scene.skyboxEnabled || !scene.environmentMap || !scene.environmentMap->valid()) {
-        return;
-    }
-    if (zBuffer.size() != colorBuffer_.size()) {
-        return;
-    }
-
-    ensureSkyboxViewRayCache(*(scene.camera));
-    if (skyboxViewRayCache_.size() != colorBuffer_.size()) {
-        return;
-    }
-
-    const glm::mat3 cameraToWorldRotation = glm::transpose(glm::mat3(scene.camera->viewMatrix()));
-    SkyboxFillContext fillContext;
-    fillContext.colorBuffer = &colorBuffer_;
-    fillContext.zBuffer = &zBuffer;
-    fillContext.viewRays = &skyboxViewRayCache_;
-    fillContext.cameraToWorldRotation = cameraToWorldRotation;
-    fillContext.environmentMap = scene.environmentMap.get();
-    fillContext.skyboxIntensity = std::max(scene.skyboxIntensity, 0.0f);
-
-    const std::size_t pixelCount = colorBuffer_.size();
-    if (pixelCount == 0) {
-        return;
-    }
-
-    // 复用线程池并行填充背景，避免单线程逐像素采样造成明显卡顿。
-    if (!fragmentMultithreadingEnabled_) {
-        FillSkyboxBackgroundRange(fillContext, 0, pixelCount);
-        return;
-    }
-
-    const std::size_t workerCount = std::max<std::size_t>(1, fragmentShadingThreadPool_.threadCount());
-    const std::size_t minChunkSize = std::max<std::size_t>(static_cast<std::size_t>(1024), pixelCount / (workerCount * 4));
-    fragmentShadingThreadPool_.parallelFor(
-        0,
-        pixelCount,
-        minChunkSize,
-        std::bind(
-            FillSkyboxBackgroundRange,
-            std::cref(fillContext),
-            std::placeholders::_1,
-            std::placeholders::_2));
-}
 
 
 SoftwareRenderer::SoftwareRenderer(int width, int height)
@@ -904,7 +688,6 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     fragmentThreadingStats_.dispatchedWorkerCount = 0;
 
     if (totalFragments == 0) {
-        drawSkybox(scene, rasterizer_.zBuffer());
         return;
     }
 
@@ -921,7 +704,6 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         ShadeFragmentRange(context, 0, totalFragments);
         fragmentThreadingStats_.activeWorkerCount = 0;
         fragmentThreadingStats_.pendingTaskCount = 0;
-        drawSkybox(scene, rasterizer_.zBuffer());
         return;
     }
 
@@ -945,6 +727,4 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
     // 任务提交并等待完成后，刷新一次线程池即时状态用于 UI 展示。
     fragmentThreadingStats_.activeWorkerCount = fragmentShadingThreadPool_.activeWorkerCount();
     fragmentThreadingStats_.pendingTaskCount = fragmentShadingThreadPool_.pendingTaskCount();
-
-    drawSkybox(scene, rasterizer_.zBuffer());
 }

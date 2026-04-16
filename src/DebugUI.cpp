@@ -248,23 +248,6 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Environment")) {
-                ImGui::Checkbox("Enable Skybox", &scene.skyboxEnabled);
-                ImGui::SliderFloat("Skybox Intensity", &scene.skyboxIntensity, 0.0f, 4.0f, "%.2f");
-
-                ImGui::Checkbox("Enable IBL Diffuse Stub", &scene.enableIblDiffuseStub);
-                ImGui::SliderFloat("IBL Diffuse Intensity", &scene.iblDiffuseIntensity, 0.0f, 2.0f, "%.2f");
-
-                const bool hasEnvironmentMap = scene.environmentMap && scene.environmentMap->valid();
-                ImGui::Text("Environment Map: %s", hasEnvironmentMap ? "Ready" : "Missing");
-
-                // 对 UI 参数做下限保护，避免负强度导致颜色贡献方向反转。
-                scene.skyboxIntensity = std::max(scene.skyboxIntensity, 0.0f);
-                scene.iblDiffuseIntensity = std::max(scene.iblDiffuseIntensity, 0.0f);
-
-                ImGui::EndTabItem();
-            }
-
             if (ImGui::BeginTabItem("Model")) {
             if (!scene.objects.empty()) {
                 const int objectCount = static_cast<int>(scene.objects.size());

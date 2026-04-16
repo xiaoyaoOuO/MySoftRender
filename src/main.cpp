@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
-#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -76,19 +75,6 @@ std::string ResolveMaryObjPath(const char* argv0)
 std::string ResolveFloorPath(const char* argv0)
 {
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "floor" / "floor.obj");
-}
-
-// 解析天空盒六个面的资源路径，命名约定为 px/nx/py/ny/pz/nz。
-std::array<std::string, TextureCube::kFaceCount> ResolveSkyboxFacePaths(const char* argv0)
-{
-    return {
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "px.jpg"),
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "nx.jpg"),
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "py.jpg"),
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "ny.jpg"),
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "pz.jpg"),
-        ResolveAssetPath(argv0, std::filesystem::path("assets") / "skybox" / "nz.jpg")
-    };
 }
 
 // 按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。每次按键触发时传入当前档位，返回下一个可用档位。
@@ -248,7 +234,6 @@ struct SceneBuildResources
 {
     std::shared_ptr<Texture2D> sphereTexture;
     std::shared_ptr<Texture2D> maryTexture;
-    std::shared_ptr<TextureCube> environmentMap;
     std::string maryObjPath;
     std::string floorObjPath;
 };
@@ -302,10 +287,6 @@ void ResetSceneState(
 
     scene.ambientLightColor = glm::vec3(1.0f);
     scene.ambientLightIntensity = 0.08f;
-    scene.skyboxEnabled = true;
-    scene.skyboxIntensity = 1.0f;
-    scene.enableIblDiffuseStub = false;
-    scene.iblDiffuseIntensity = 0.25f;
 
     Scene::instance = &scene;
 }
@@ -434,8 +415,6 @@ void BuildSceneByPreset(Scene& scene, ScenePreset preset, const SceneBuildResour
         BuildScenePresetOne(scene, resources);
     }
 
-    scene.environmentMap = resources.environmentMap;
-
     // 保证默认阴影分辨率不低于 512，避免切场景后分辨率过低导致阴影阶梯明显。
     scene.shadowSettings.shadowMapResolution = std::max(scene.shadowSettings.shadowMapResolution, 512);
 }
@@ -463,25 +442,6 @@ glm::vec3 NormalizeColorToUnitRange(const glm::vec3& color)
  */
 void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)
 {
-    if (payload.type == FragmentType::Skybox) {
-        glm::vec3 skyColor = glm::vec3(payload.color.r, payload.color.g, payload.color.b) / 255.0f;
-        if (scene.environmentMap && scene.environmentMap->valid()) {
-            skyColor = scene.environmentMap->sample(payload.environmentDir);
-        }
-
-        skyColor *= std::max(scene.skyboxIntensity, 0.0f);
-        skyColor = glm::clamp(skyColor, glm::vec3(0.0f), glm::vec3(1.0f));
-
-        const Color skyboxColor = {
-            static_cast<std::uint8_t>(skyColor.r * 255.0f),
-            static_cast<std::uint8_t>(skyColor.g * 255.0f),
-            static_cast<std::uint8_t>(skyColor.b * 255.0f),
-            255
-        };
-        colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(skyboxColor);
-        return;
-    }
-
     if (!scene.camera) {
         colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(payload.color);
         return;
@@ -561,13 +521,6 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
     const float shadowVisibility = std::clamp(payload.shadowVisibility, 0.0f, 1.0f);
     glm::vec3 finalLinear = albedo * ambientLighting;
     finalLinear += shadowVisibility * (albedo * directDiffuseLighting + specularLighting);
-
-    // IBL 占位项：先用法线方向采样环境贴图作为漫反射近似入口，后续可替换为 irradiance 预积分结果。
-    if (scene.enableIblDiffuseStub && scene.environmentMap && scene.environmentMap->valid()) {
-        const glm::vec3 iblDiffuse = scene.environmentMap->sample(normal);
-        finalLinear += albedo * iblDiffuse * std::max(scene.iblDiffuseIntensity, 0.0f);
-    }
-
     finalLinear += emissiveLighting;
     finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
 
@@ -586,7 +539,6 @@ int main(int argc, char* argv[])
     const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
     const std::string maryObjPath = ResolveMaryObjPath(argv0);
     const std::string floorObjPath = ResolveFloorPath(argv0);
-    const std::array<std::string, TextureCube::kFaceCount> skyboxFacePaths = ResolveSkyboxFacePaths(argv0);
 
     auto sphereTexture = std::make_shared<Texture2D>();
     if (!sphereTexture->loadFromFile(sphereTexturePath)) {
@@ -609,19 +561,10 @@ int main(int argc, char* argv[])
         std::cout << "Mary texture loaded from: " << maryTexturePath << '\n';
     }
 
-    auto environmentMap = std::make_shared<TextureCube>();
-    if (!environmentMap->loadFromFiles(skyboxFacePaths, false)) {
-        environmentMap->createDebugFaces(512);
-        std::cout << "Skybox texture: using generated debug cubemap (assets/skybox/px|nx|py|ny|pz|nz.jpg not found)" << '\n';
-    } else {
-        std::cout << "Skybox texture loaded from assets/skybox/*.jpg" << '\n';
-    }
-
     Scene scene;
     SceneBuildResources sceneResources;
     sceneResources.sphereTexture = sphereTexture;
     sceneResources.maryTexture = maryTexture;
-    sceneResources.environmentMap = environmentMap;
     sceneResources.maryObjPath = maryObjPath;
     sceneResources.floorObjPath = floorObjPath;
 

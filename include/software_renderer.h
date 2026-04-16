@@ -92,25 +92,6 @@ private:
     FragmentThreadingStats fragmentThreadingStats_;
     std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> fragmentShader_;
 private:
-    /**
-     * @brief 执行天空盒背景填充流程，仅写入未被前景覆盖的像素。
-     * @param scene 当前场景对象，提供相机与环境贴图配置。
-     * @param zBuffer 当前帧像素级深度缓冲（有限值表示已被前景覆盖）。
-     */
-    void drawSkybox(const Scene& scene, const std::vector<float>& zBuffer);
-
-    /**
-     * @brief 确保天空盒视空间射线缓存可用，并在参数变化时重建。
-     * @param camera 当前相机对象，用于读取 FOV 与宽高比。
-     */
-    void ensureSkyboxViewRayCache(const Camera& camera);
-
-    std::vector<glm::vec3> skyboxViewRayCache_; // 每像素视空间射线缓存，降低每帧反投影开销
-    int skyboxViewRayCacheWidth_ = 0;
-    int skyboxViewRayCacheHeight_ = 0;
-    float skyboxViewRayCacheFovYDeg_ = -1.0f;
-    float skyboxViewRayCacheAspect_ = -1.0f;
-
     void putPixel(int x, int y, const Color& color);
     void putPixel(size_t index, const Color& color);
 };

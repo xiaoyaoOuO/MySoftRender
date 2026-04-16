@@ -1,7 +1,5 @@
 #pragma once
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -45,42 +43,4 @@ private:
     int height_ = 0;
     int channels_ = 0;
     std::vector<std::uint8_t> pixels_;
-};
-
-/**
- * @brief 立方体纹理，按 +X/-X/+Y/-Y/+Z/-Z 六个面存储环境贴图。
- */
-class TextureCube
-{
-public:
-    static constexpr std::size_t kFaceCount = 6;
-
-    /**
-     * @brief 立方体贴图面索引定义，顺序固定为 +X/-X/+Y/-Y/+Z/-Z。
-     */
-    enum class Face : std::size_t
-    {
-        PositiveX = 0,
-        NegativeX = 1,
-        PositiveY = 2,
-        NegativeY = 3,
-        PositiveZ = 4,
-        NegativeZ = 5
-    };
-
-    // 从六张图片加载立方体贴图。传入固定顺序的文件路径数组，全部成功时返回 true。
-    bool loadFromFiles(const std::array<std::string, kFaceCount>& filePaths, bool flipVertically = false);
-
-    // 创建可视化调试立方体贴图。资源缺失时调用，可快速确认天空盒方向是否正确。
-    void createDebugFaces(int faceSize = 256);
-
-    // 按方向向量采样环境颜色。输入为世界空间方向（可非单位向量），内部会自动归一化。
-    glm::vec3 sample(const glm::vec3& direction) const;
-
-    // 查询立方体贴图是否可用。仅当六个面都成功初始化后返回 true。
-    bool valid() const { return valid_; }
-
-private:
-    std::array<Texture2D, kFaceCount> faces_;
-    bool valid_ = false;
 };
