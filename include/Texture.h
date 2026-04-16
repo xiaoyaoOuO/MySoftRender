@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -43,4 +44,50 @@ private:
     int height_ = 0;
     int channels_ = 0;
     std::vector<std::uint8_t> pixels_;
+};
+
+/**
+ * @brief 立方体贴图资源，负责六面纹理加载与方向采样。
+ */
+class CubemapTexture
+{
+public:
+    /**
+     * @brief 从目录中解析并加载六个面纹理。
+     * @param directoryPath 天空盒目录路径，支持 posx/negx/posy/negy/posz/negz 命名。
+     */
+    bool loadFromDirectory(const std::string& directoryPath);
+
+    /**
+     * @brief 按方向向量采样天空盒颜色。
+     * @param direction 世界空间方向向量，建议传入单位向量。
+     * @return 返回线性空间 RGB 颜色；若资源无效返回洋红色。
+     */
+    glm::vec3 sample(const glm::vec3& direction) const;
+
+    // 查询天空盒资源是否可采样。六个面全部加载成功且尺寸一致时返回 true。
+    bool valid() const { return valid_; }
+
+    // 获取天空盒来源目录路径。用于日志输出或调试面板显示当前资源来源。
+    const std::string& directoryPath() const { return directoryPath_; }
+
+private:
+    enum class Face : std::size_t
+    {
+        PositiveX = 0,
+        NegativeX,
+        PositiveY,
+        NegativeY,
+        PositiveZ,
+        NegativeZ
+    };
+
+    // 根据方向向量选择立方体面，并输出该面的局部 uv（范围 [-1,1]）。
+    static Face selectFace(const glm::vec3& direction, float& outU, float& outV);
+
+    std::array<Texture2D, 6> faces_;
+    bool valid_ = false;
+    int faceWidth_ = 0;
+    int faceHeight_ = 0;
+    std::string directoryPath_;
 };

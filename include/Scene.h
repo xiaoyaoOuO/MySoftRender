@@ -1,12 +1,15 @@
 #pragma once
 #include<vector>
 #include<memory>
+#include<string>
 #include "Camera.h"
 #include "Object.h"
 #include "Triangle.h"
 #include "Light.h"
 using std::vector;
 using std::unique_ptr;  
+
+class CubemapTexture;
 
 // 定义阴影过滤模式。当前先实现 Hard，PCF/PCSS 先保留分支入口，便于后续逐步补全算法。
 enum class ShadowFilterMode
@@ -43,6 +46,9 @@ public:
     glm::vec3 ambientLightColor = glm::vec3(1.0f); // 场景的环境光颜色
     float ambientLightIntensity = 0.5f; // 场景的环境光强度
     ShadowSettings shadowSettings; // 场景阴影配置
+    bool enableSkybox = true; // 是否启用天空盒背景绘制
+    std::shared_ptr<CubemapTexture> skyboxTexture; // 当前场景绑定的天空盒资源
+    std::string skyboxName; // 当前天空盒显示名称（用于日志与调试 UI）
     int lightProxyObjectIndex = -1; // 光源可视化代理对象在 objects 中的索引（-1 表示无代理）
 
     inline static Scene* instance = nullptr; // 场景单例实例

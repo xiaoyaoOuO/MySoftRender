@@ -92,6 +92,22 @@ private:
     FragmentThreadingStats fragmentThreadingStats_;
     std::function<void(std::vector<std::uint32_t>&, const Fragment&, const Scene&)> fragmentShader_;
 private:
+    
+    //按当前相机参数更新天空盒视线方向缓存。     
+    void updateSkyboxViewRayCache(const Camera& camera);
+
+    /**
+     * @brief 把天空盒采样结果填充到颜色缓冲。
+     * @param depthBuffer 可选深度缓冲；传入后仅填充未被几何覆盖的像素。
+     */
+    void drawSkyboxBackground(const Scene& scene, const std::vector<float>* depthBuffer = nullptr);
+
+    std::vector<glm::vec3> skyboxViewRaysCache_; // 缓存每个像素在相机空间下的单位视线方向
+    int skyboxViewRayCacheWidth_ = 0; // 视线缓存对应的宽度
+    int skyboxViewRayCacheHeight_ = 0; // 视线缓存对应的高度
+    float skyboxViewRayCacheFovYDeg_ = -1.0f; // 视线缓存对应的相机垂直视场角
+    float skyboxViewRayCacheAspect_ = -1.0f; // 视线缓存对应的相机宽高比
+
     void putPixel(int x, int y, const Color& color);
     void putPixel(size_t index, const Color& color);
 };

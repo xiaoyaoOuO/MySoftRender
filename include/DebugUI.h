@@ -2,6 +2,9 @@
 
 #include <SDL2/SDL.h>
 
+#include <string>
+#include <vector>
+
 class Scene;
 class SoftwareRenderer;
 
@@ -49,11 +52,44 @@ public:
     // 消费并返回一次场景切换请求。无请求时返回 -1。
     int consumePendingSceneSwitch();
 
+    // 设置天空盒候选项列表。主程序在启动或资源刷新后调用，用于刷新 UI 下拉框。
+    void setSkyboxOptions(const std::vector<std::string>& options);
+
+    // 设置当前天空盒索引。主程序在应用切换成功后调用，同步 UI 当前选中状态。
+    void setCurrentSkyboxIndex(int skyboxIndex);
+
+    // 查询是否存在待处理的天空盒切换请求。返回 true 表示本帧 UI 发起了切换。
+    bool hasPendingSkyboxSwitch() const;
+
+    // 消费并返回一次天空盒切换请求。无请求时返回 -1。
+    int consumePendingSkyboxSwitch();
+
 private:
+    // 绘制场景级 UI（预设切换、天空盒切换、基础状态信息）。
+    void drawSceneSection(Scene& scene);
+
+    // 绘制 Shadow 页签内容（阴影参数与过滤模式）。
+    void drawShadowTab(Scene& scene);
+
+    // 绘制 Light 页签内容（主光源参数与辅助操作）。
+    void drawLightTab(Scene& scene);
+
+    // 绘制 Model 页签内容（选中对象变换编辑）。
+    void drawModelTab(Scene& scene);
+
+    // 绘制 Threading 页签内容（片元线程池开关与统计）。
+    void drawThreadingTab(SoftwareRenderer& renderer);
+
+    // 绘制 Status 页签内容（热键、相机与主光源状态）。
+    void drawStatusTab(const Scene& scene);
+
     SDL_Renderer* renderer_ = nullptr;
     bool initialized_ = false;
     bool visible_ = true;
     int selectedObjectIndex_ = 0;
     int currentScenePreset_ = 0;
     int pendingScenePreset_ = -1;
+    std::vector<std::string> skyboxOptions_;
+    int currentSkyboxIndex_ = -1;
+    int pendingSkyboxIndex_ = -1;
 };

@@ -771,4 +771,90 @@
 - src/main.cpp
 - CONVERSATION_LOG.md
 
+## 2026-04-16 会话 046
+
+### 实现功能
+
+- 新增 `CubemapTexture` 资源模块：支持从目录自动解析并加载六面纹理（`posx/negx/posy/negy/posz/negz`），并提供方向向量采样接口。
+- 在 `main.cpp` 中接入 `assets/cubemap` 目录扫描与可用天空盒发现逻辑：
+	- 自动遍历子目录并筛选“六面齐全且加载成功”的天空盒；
+	- 启动时默认加载第一套可用天空盒并输出日志。
+- 在 `Scene` 中新增天空盒状态字段（启用开关、当前天空盒纹理、天空盒名称），统一承载运行时天空盒状态。
+- 在 `SoftwareRenderer` 中新增天空盒背景绘制路径：
+	- 按相机 `fov/aspect/forward/right/up` 逐像素构造视线；
+	- 采样当前天空盒并写入颜色缓冲作为背景。
+- 在 `DebugUI` 的 Scene 区新增 Skybox 下拉框，并沿用“请求-消费”机制：
+	- UI 只记录待切换索引；
+	- 主循环安全点执行实际天空盒切换，避免 UI 直接改资源生命周期。
+- 完成 CMake 构建验证，`mySoftRender` 编译通过。
+- 按约束将本次执行中遇到的 `rg` 缺失问题记录到 `Experience.md`。
+
+### 修改文件
+
+- include/Texture.h
+- src/Texture.cpp
+- include/Scene.h
+- include/software_renderer.h
+- src/software_renderer.cpp
+- include/DebugUI.h
+- src/DebugUI.cpp
+- src/main.cpp
+- Experience.md
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 047
+
+### 实现功能
+
+- 针对天空盒导致的帧率下降，完成最小侵入性能优化：
+	- 新增天空盒视线缓存（相机空间单位射线缓存），仅在分辨率/FOV/宽高比变化时重建，避免每帧逐像素重复归一化计算。
+	- 调整天空盒绘制时机为“几何光栅化之后”，并基于 `Rasterizer` 深度缓冲仅填充未被前景覆盖的背景像素，减少无效采样与无效写回。
+- 在 `Rasterizer` 新增只读 `zBuffer()` 访问接口，供渲染器背景填充阶段进行可见性判定。
+- 保持现有天空盒功能与 UI 切换行为不变，仅优化渲染路径性能。
+- 完成 Debug/Release 双构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/Rasterizer.h
+- include/software_renderer.h
+- src/software_renderer.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 048
+
+### 实现功能
+
+- 按“继续提升帧率，采用并行优化”的需求，在不改外部接口的前提下复用现有线程池完成两处并行加速：
+	- 天空盒背景绘制改为线程池分块并行（按像素区间并行），保留单线程回退路径。
+	- 点光源阴影 6 面深度 pass 改为按面并行（每个面独立任务），保留单线程回退路径。
+- 并行前对点光阴影投射对象做模型矩阵快照，避免线程中重复读取可变缓存状态。
+- 新增具名并行任务函数与上下文结构，减少主流程分支深度并保持中文注释规范。
+- 完成 Debug/Release 双构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- src/software_renderer.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 049
+
+### 实现功能
+
+- 按“简化 `drawShadowPanel`”需求完成 UI 模块划分，保持现有交互与参数逻辑不变。
+- 将 `drawShadowPanel` 从单体大函数拆分为 6 个私有子模块函数：
+	- `drawSceneSection`
+	- `drawShadowTab`
+	- `drawLightTab`
+	- `drawModelTab`
+	- `drawThreadingTab`
+	- `drawStatusTab`
+- 主函数仅保留窗口初始化与 Tab 调度逻辑，降低嵌套层级并提升可维护性。
+- 完成 Debug/Release 双构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- include/DebugUI.h
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
 

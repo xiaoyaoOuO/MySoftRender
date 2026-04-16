@@ -77,6 +77,102 @@ std::string ResolveFloorPath(const char* argv0)
     return ResolveAssetPath(argv0, std::filesystem::path("assets") / "floor" / "floor.obj");
 }
 
+// 解析天空盒根目录路径（assets/cubemap）。程序启动时调用，用于扫描所有可用天空盒目录。
+std::string ResolveCubemapRootPath(const char* argv0)
+{
+    return ResolveAssetPath(argv0, std::filesystem::path("assets") / "cubemap");
+}
+
+/**
+ * @brief 记录单个天空盒资源目录及其已加载纹理对象。
+ */
+struct SkyboxAssetEntry
+{
+    std::string name;
+    std::string directoryPath;
+    std::shared_ptr<CubemapTexture> texture;
+};
+
+/**
+ * @brief 扫描天空盒根目录并加载所有可用的立方体贴图。
+ * @param cubemapRootPath 天空盒根目录（通常为 assets/cubemap）。
+ * @return 返回可用天空盒列表（已按目录名排序）。
+ */
+std::vector<SkyboxAssetEntry> DiscoverSkyboxAssets(const std::string& cubemapRootPath)
+{
+    namespace fs = std::filesystem;
+
+    std::vector<SkyboxAssetEntry> assets;
+    std::error_code ec;
+    const fs::path rootPath(cubemapRootPath);
+    if (!fs::exists(rootPath, ec) || ec || !fs::is_directory(rootPath, ec) || ec) {
+        return assets;
+    }
+
+    for (const fs::directory_entry& entry : fs::directory_iterator(rootPath, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_directory(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+
+        auto cubemapTexture = std::make_shared<CubemapTexture>();
+        if (!cubemapTexture->loadFromDirectory(entry.path().string())) {
+            continue;
+        }
+
+        SkyboxAssetEntry asset;
+        asset.name = entry.path().filename().string();
+        asset.directoryPath = entry.path().string();
+        asset.texture = std::move(cubemapTexture);
+        assets.emplace_back(std::move(asset));
+    }
+
+    std::sort(
+        assets.begin(),
+        assets.end(),
+        [](const SkyboxAssetEntry& lhs, const SkyboxAssetEntry& rhs) {
+            return lhs.name < rhs.name;
+        });
+    return assets;
+}
+
+/**
+ * @brief 将天空盒资源列表转换为 UI 下拉框文本列表。
+ * @param assets 已加载天空盒资源列表。
+ * @return 返回与 assets 同顺序的名称数组。
+ */
+std::vector<std::string> BuildSkyboxNames(const std::vector<SkyboxAssetEntry>& assets)
+{
+    std::vector<std::string> names;
+    names.reserve(assets.size());
+    for (const SkyboxAssetEntry& asset : assets) {
+        names.push_back(asset.name);
+    }
+    return names;
+}
+
+/**
+ * @brief 按索引把天空盒应用到场景。
+ * @param scene 当前场景对象。
+ * @param assets 可用天空盒资源列表。
+ * @param skyboxIndex 目标天空盒索引。
+ * @return 索引合法且应用成功时返回 true。
+ */
+bool ApplySkyboxByIndex(Scene& scene, const std::vector<SkyboxAssetEntry>& assets, int skyboxIndex)
+{
+    if (skyboxIndex < 0 || skyboxIndex >= static_cast<int>(assets.size())) {
+        return false;
+    }
+
+    scene.skyboxTexture = assets[static_cast<std::size_t>(skyboxIndex)].texture;
+    scene.skyboxName = assets[static_cast<std::size_t>(skyboxIndex)].name;
+    scene.enableSkybox = static_cast<bool>(scene.skyboxTexture);
+    return scene.enableSkybox;
+}
+
 // 按 1x -> 2x -> 4x -> 1x 的顺序切换 MSAA 档位。每次按键触发时传入当前档位，返回下一个可用档位。
 int NextMsaaSampleCount(int currentSampleCount)
 {
@@ -539,6 +635,7 @@ int main(int argc, char* argv[])
     const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
     const std::string maryObjPath = ResolveMaryObjPath(argv0);
     const std::string floorObjPath = ResolveFloorPath(argv0);
+    const std::string cubemapRootPath = ResolveCubemapRootPath(argv0);
 
     auto sphereTexture = std::make_shared<Texture2D>();
     if (!sphereTexture->loadFromFile(sphereTexturePath)) {
@@ -570,6 +667,24 @@ int main(int argc, char* argv[])
 
     ScenePreset currentScenePreset = ScenePreset::Scene1MaryFloorPoint;
     BuildSceneByPreset(scene, currentScenePreset, sceneResources);
+
+    const std::vector<SkyboxAssetEntry> skyboxAssets = DiscoverSkyboxAssets(cubemapRootPath);
+    const std::vector<std::string> skyboxNames = BuildSkyboxNames(skyboxAssets);
+    int currentSkyboxIndex = -1;
+
+    if (!skyboxAssets.empty()) {
+        currentSkyboxIndex = 0;
+        if (ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex)) {
+            std::cout << "Skybox loaded: " << scene.skyboxName
+                      << " (" << skyboxAssets[static_cast<std::size_t>(currentSkyboxIndex)].directoryPath << ")" << '\n';
+        }
+        std::cout << "Skybox assets discovered: " << skyboxAssets.size() << '\n';
+    } else {
+        scene.skyboxTexture.reset();
+        scene.skyboxName = "None";
+        scene.enableSkybox = false;
+        std::cout << "Skybox: no valid cubemap found under: " << cubemapRootPath << '\n';
+    }
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     renderer.setBackfaceCullingEnabled(true);
@@ -630,6 +745,8 @@ int main(int argc, char* argv[])
         std::cerr << "DebugUI init failed, continue without ImGui panel" << '\n';
     }
     debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+    debugUI.setSkyboxOptions(skyboxNames);
+    debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
 
     bool running = true;
     const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
@@ -781,6 +898,9 @@ int main(int argc, char* argv[])
             const ScenePreset requestedPreset = ScenePresetFromIndex(requestedPresetIndex);
             if (requestedPreset != currentScenePreset) {
                 BuildSceneByPreset(scene, requestedPreset, sceneResources);
+                if (currentSkyboxIndex >= 0) {
+                    (void)ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex);
+                }
                 currentScenePreset = requestedPreset;
                 debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
 
@@ -799,6 +919,21 @@ int main(int argc, char* argv[])
             } else {
                 debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
             }
+        }
+
+        // 在主循环安全点处理天空盒切换请求，避免 UI 层直接切换资源导致生命周期耦合。
+        if (debugUI.hasPendingSkyboxSwitch()) {
+            const int requestedSkyboxIndex = debugUI.consumePendingSkyboxSwitch();
+            const bool indexValid = requestedSkyboxIndex >= 0
+                && requestedSkyboxIndex < static_cast<int>(skyboxAssets.size());
+
+            if (indexValid && requestedSkyboxIndex != currentSkyboxIndex) {
+                if (ApplySkyboxByIndex(scene, skyboxAssets, requestedSkyboxIndex)) {
+                    currentSkyboxIndex = requestedSkyboxIndex;
+                    std::cout << "Skybox switched to: " << scene.skyboxName << '\n';
+                }
+            }
+            debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
         }
 
         if (debugUI.wantsKeyboardCapture()) {

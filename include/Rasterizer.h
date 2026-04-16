@@ -584,6 +584,9 @@ public:
     int height() const;
     const std::vector<Fragment>& fragments() const { return fragments_; }
 
+    // 只读访问像素级深度缓冲。用于后处理阶段判断像素是否已被几何体覆盖。
+    const std::vector<float>& zBuffer() const { return zBuffer_; }
+
     // 查询是否启用背面剔除。返回 true 时，仅保留当前约定的正面三角形参与光栅化。
     bool backfaceCullingEnabled() const { return backfaceCullingEnabled_; }
 

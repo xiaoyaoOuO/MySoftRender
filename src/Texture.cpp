@@ -1,9 +1,14 @@
 #include "Texture.h"
 
+#include <array>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <unordered_map>
 
 #include <glm/common.hpp>
+#include <glm/geometric.hpp>
 #include <stb_image.h>
 
 namespace {
@@ -11,6 +16,45 @@ namespace {
 float Fract(float value)
 {
     return value - std::floor(value);
+}
+
+// 将字符串转换为小写 ASCII，便于做大小写无关的文件名匹配。
+std::string ToLowerAscii(const std::string& text)
+{
+    std::string lower = text;
+    std::transform(
+        lower.begin(),
+        lower.end(),
+        lower.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+    return lower;
+}
+
+// 扫描目录下的普通文件，并建立 stem -> 完整路径映射，供天空盒面别名查找使用。
+std::unordered_map<std::string, std::filesystem::path> BuildStemPathMap(const std::filesystem::path& directoryPath)
+{
+    namespace fs = std::filesystem;
+    std::unordered_map<std::string, fs::path> stemPathMap;
+
+    std::error_code ec;
+    for (const fs::directory_entry& entry : fs::directory_iterator(directoryPath, ec)) {
+        if (ec) {
+            stemPathMap.clear();
+            return stemPathMap;
+        }
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+
+        const std::string stem = ToLowerAscii(entry.path().stem().string());
+        if (!stem.empty()) {
+            stemPathMap[stem] = entry.path();
+        }
+    }
+    return stemPathMap;
 }
 }
 
@@ -122,4 +166,131 @@ glm::vec3 Texture2D::sample(float u, float v) const
     const glm::vec3 c0 = glm::mix(c00, c10, tx);
     const glm::vec3 c1 = glm::mix(c01, c11, tx);
     return glm::mix(c0, c1, ty);
+}
+
+// 从目录中按常见命名约定加载天空盒六个面纹理，要求六面均存在且尺寸一致。
+bool CubemapTexture::loadFromDirectory(const std::string& directoryPath)
+{
+    namespace fs = std::filesystem;
+
+    valid_ = false;
+    faceWidth_ = 0;
+    faceHeight_ = 0;
+    directoryPath_.clear();
+
+    const fs::path rootPath(directoryPath);
+    std::error_code ec;
+    if (!fs::exists(rootPath, ec) || ec || !fs::is_directory(rootPath, ec) || ec) {
+        return false;
+    }
+
+    const std::unordered_map<std::string, fs::path> stemPathMap = BuildStemPathMap(rootPath);
+    if (stemPathMap.empty()) {
+        return false;
+    }
+
+    const std::array<std::array<const char*, 3>, 6> faceAliases = {{
+        {{"posx", "right", "px"}},
+        {{"negx", "left", "nx"}},
+        {{"posy", "top", "py"}},
+        {{"negy", "bottom", "ny"}},
+        {{"posz", "front", "pz"}},
+        {{"negz", "back", "nz"}}
+    }};
+
+    std::array<fs::path, 6> facePaths;
+    for (std::size_t faceIndex = 0; faceIndex < faceAliases.size(); ++faceIndex) {
+        bool found = false;
+        for (const char* alias : faceAliases[faceIndex]) {
+            const auto it = stemPathMap.find(alias);
+            if (it == stemPathMap.end()) {
+                continue;
+            }
+            facePaths[faceIndex] = it->second;
+            found = true;
+            break;
+        }
+        if (!found) {
+            return false;
+        }
+    }
+
+    for (std::size_t faceIndex = 0; faceIndex < facePaths.size(); ++faceIndex) {
+        Texture2D faceTexture;
+        if (!faceTexture.loadFromFile(facePaths[faceIndex].string(), false)) {
+            return false;
+        }
+
+        if (faceIndex == 0) {
+            faceWidth_ = faceTexture.width();
+            faceHeight_ = faceTexture.height();
+        } else if (faceTexture.width() != faceWidth_ || faceTexture.height() != faceHeight_) {
+            return false;
+        }
+
+        faces_[faceIndex] = std::move(faceTexture);
+    }
+
+    directoryPath_ = rootPath.string();
+    valid_ = true;
+    return true;
+}
+
+// 根据方向向量选择立方体贴图采样面，并计算面内局部 uv。
+CubemapTexture::Face CubemapTexture::selectFace(const glm::vec3& direction, float& outU, float& outV)
+{
+    const glm::vec3 absDir = glm::abs(direction);
+    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+        if (direction.x >= 0.0f) {
+            outU = -direction.z / absDir.x;
+            outV = -direction.y / absDir.x;
+            return Face::PositiveX;
+        }
+        outU = direction.z / absDir.x;
+        outV = -direction.y / absDir.x;
+        return Face::NegativeX;
+    }
+
+    if (absDir.y >= absDir.x && absDir.y >= absDir.z) {
+        if (direction.y >= 0.0f) {
+            outU = direction.x / absDir.y;
+            outV = direction.z / absDir.y;
+            return Face::PositiveY;
+        }
+        outU = direction.x / absDir.y;
+        outV = -direction.z / absDir.y;
+        return Face::NegativeY;
+    }
+
+    if (direction.z >= 0.0f) {
+        outU = direction.x / absDir.z;
+        outV = -direction.y / absDir.z;
+        return Face::PositiveZ;
+    }
+    outU = -direction.x / absDir.z;
+    outV = -direction.y / absDir.z;
+    return Face::NegativeZ;
+}
+
+// 使用世界方向向量进行天空盒采样，用于背景绘制与反射查询等场景。
+glm::vec3 CubemapTexture::sample(const glm::vec3& direction) const
+{
+    if (!valid_) {
+        return glm::vec3(1.0f, 0.0f, 1.0f);
+    }
+
+    glm::vec3 safeDirection = direction;
+    if (glm::dot(safeDirection, safeDirection) <= 1e-12f) {
+        safeDirection = glm::vec3(0.0f, 0.0f, 1.0f);
+    } else {
+        safeDirection = glm::normalize(safeDirection);
+    }
+
+    float localU = 0.0f;
+    float localV = 0.0f;
+    const Face face = selectFace(safeDirection, localU, localV);
+
+    const float u = std::clamp((localU + 1.0f) * 0.5f, 0.0f, 1.0f);
+    const float v = std::clamp((localV + 1.0f) * 0.5f, 0.0f, 1.0f);
+    return faces_[static_cast<std::size_t>(face)].sample(u, v);
 }
