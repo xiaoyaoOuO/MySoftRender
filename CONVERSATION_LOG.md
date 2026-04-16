@@ -857,4 +857,25 @@
 - src/DebugUI.cpp
 - CONVERSATION_LOG.md
 
+## 2026-04-16 会话 050
+
+### 实现功能
+
+- 按“让 main 函数按功能模块划分并整体精简”的需求，对 `src/main.cpp` 做职责拆分，保持行为不变。
+- 新增运行时状态结构：
+	- `InputRuntimeState`：集中维护移动输入、相机 yaw/pitch、鼠标捕获状态。
+	- `FrameRuntimeState`：集中维护 `deltaTime/FPS` 统计所需计时字段。
+- 将主循环中的大段逻辑提取为具名函数并分层：
+	- 资源与系统初始化：贴图加载、天空盒初始化、渲染器默认配置、SDL 呈现资源创建/销毁。
+	- 事件处理：鼠标视角、WASD 状态、功能键（F1~F5/ESC）、窗口失焦处理。
+	- 安全点切换：场景切换与天空盒切换请求消费。
+	- 帧更新与渲染：相机/代理球同步、场景更新、渲染提交与 FPS 标题刷新。
+- `main` 现在聚焦为“初始化 -> 主循环调度 -> 退出清理”的流程编排，可读性和维护性提升。
+- 完成 Debug/Release 双构建验证，`mySoftRender` 编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- CONVERSATION_LOG.md
+
 

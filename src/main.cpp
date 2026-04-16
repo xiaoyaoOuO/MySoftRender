@@ -628,15 +628,51 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
     colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(finalColor);
 }
 
-int main(int argc, char* argv[])
+/**
+ * @brief 运行时输入状态，集中管理主循环涉及的相机与键盘输入标志。
+ */
+struct InputRuntimeState
 {
-    const char* argv0 = argc > 0 ? argv[0] : nullptr;
-    const std::string sphereTexturePath = ResolveSphereTexturePath(argv0);
-    const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
-    const std::string maryObjPath = ResolveMaryObjPath(argv0);
-    const std::string floorObjPath = ResolveFloorPath(argv0);
-    const std::string cubemapRootPath = ResolveCubemapRootPath(argv0);
+    bool moveForward = false;
+    bool moveBackward = false;
+    bool moveLeft = false;
+    bool moveRight = false;
+    float cameraYawDeg = 0.0f;
+    float cameraPitchDeg = 0.0f;
+    bool mouseCaptureEnabled = false;
+    bool mouseCaptureSupported = true;
+};
 
+/**
+ * @brief 运行时帧统计状态，用于 deltaTime 与 FPS 标题刷新。
+ */
+struct FrameRuntimeState
+{
+    Uint64 perfFrequency = 0;
+    Uint64 fpsWindowStartCounter = 0;
+    Uint64 lastFrameCounter = 0;
+    int fpsFrameCount = 0;
+};
+
+constexpr float kMouseSensitivityDegPerPixel = 0.12f;
+constexpr float kMaxPitchDeg = 89.0f;
+
+/**
+ * @brief 重置 WASD 连续移动状态，避免跨事件/场景残留输入。
+ */
+void ResetMovementInputState(InputRuntimeState& inputState)
+{
+    inputState.moveForward = false;
+    inputState.moveBackward = false;
+    inputState.moveLeft = false;
+    inputState.moveRight = false;
+}
+
+/**
+ * @brief 加载球体贴图，失败时自动回退为棋盘格纹理。
+ */
+std::shared_ptr<Texture2D> LoadSphereTextureWithFallback(const std::string& sphereTexturePath)
+{
     auto sphereTexture = std::make_shared<Texture2D>();
     if (!sphereTexture->loadFromFile(sphereTexturePath)) {
         sphereTexture->createCheckerboard(
@@ -649,7 +685,14 @@ int main(int argc, char* argv[])
     } else {
         std::cout << "Sphere texture loaded from: " << sphereTexturePath << '\n';
     }
+    return sphereTexture;
+}
 
+/**
+ * @brief 加载 Mary 贴图，失败时返回空指针并继续使用顶点色渲染。
+ */
+std::shared_ptr<Texture2D> LoadMaryTextureOptional(const std::string& maryTexturePath)
+{
     std::shared_ptr<Texture2D> maryTexture = std::make_shared<Texture2D>();
     if (!maryTexture->loadFromFile(maryTexturePath)) {
         maryTexture.reset();
@@ -657,6 +700,503 @@ int main(int argc, char* argv[])
     } else {
         std::cout << "Mary texture loaded from: " << maryTexturePath << '\n';
     }
+    return maryTexture;
+}
+
+/**
+ * @brief 初始化并应用默认天空盒，返回当前生效的天空盒索引。
+ */
+int InitializeSkyboxSelection(
+    Scene& scene,
+    const std::vector<SkyboxAssetEntry>& skyboxAssets,
+    const std::string& cubemapRootPath)
+{
+    if (!skyboxAssets.empty()) {
+        int currentSkyboxIndex = 0;
+        if (ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex)) {
+            std::cout << "Skybox loaded: " << scene.skyboxName
+                      << " (" << skyboxAssets[static_cast<std::size_t>(currentSkyboxIndex)].directoryPath << ")" << '\n';
+        }
+        std::cout << "Skybox assets discovered: " << skyboxAssets.size() << '\n';
+        return currentSkyboxIndex;
+    }
+
+    scene.skyboxTexture.reset();
+    scene.skyboxName = "None";
+    scene.enableSkybox = false;
+    std::cout << "Skybox: no valid cubemap found under: " << cubemapRootPath << '\n';
+    return -1;
+}
+
+// 初始化渲染器默认开关与默认着色器。
+void ConfigureRendererDefaults(SoftwareRenderer& renderer)
+{
+    renderer.setBackfaceCullingEnabled(true);
+    renderer.setMsaaSampleCount(1);
+    renderer.SetFragmentShader(BlingPhongShader);
+
+    std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
+    std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
+    std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+    std::cout << "Debug UI: ON (press F4 to toggle panel)" << '\n';
+    std::cout << "Mouse capture: ON (press F5 to toggle for ImGui interaction)" << '\n';
+}
+
+// 创建 SDL 窗口、呈现器与帧缓冲纹理。
+bool CreateSdlPresentationResources(
+    SDL_Window*& window,
+    SDL_Renderer*& presentRenderer,
+    SDL_Texture*& framebufferTexture)
+{
+    window = nullptr;
+    presentRenderer = nullptr;
+    framebufferTexture = nullptr;
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+        std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
+        return false;
+    }
+
+    window = SDL_CreateWindow(
+        "mySoftRender",
+        SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED,
+        Window::kWindowWidth,
+        Window::kWindowHeight,
+        SDL_WINDOW_SHOWN);
+
+    if (window == nullptr) {
+        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << '\n';
+        SDL_Quit();
+        return false;
+    }
+
+    const Uint32 rendererFlags = SDL_RENDERER_ACCELERATED
+        | (Window::kEnablePresentVSync ? SDL_RENDERER_PRESENTVSYNC : 0u);
+    presentRenderer = SDL_CreateRenderer(window, -1, rendererFlags);
+    if (presentRenderer == nullptr) {
+        std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << '\n';
+        SDL_DestroyWindow(window);
+        window = nullptr;
+        SDL_Quit();
+        return false;
+    }
+
+    framebufferTexture = SDL_CreateTexture(
+        presentRenderer,
+        SDL_PIXELFORMAT_ARGB8888,
+        SDL_TEXTUREACCESS_STREAMING,
+        Window::kWindowWidth,
+        Window::kWindowHeight);
+
+    if (framebufferTexture == nullptr) {
+        std::cerr << "SDL_CreateTexture failed: " << SDL_GetError() << '\n';
+        SDL_DestroyRenderer(presentRenderer);
+        presentRenderer = nullptr;
+        SDL_DestroyWindow(window);
+        window = nullptr;
+        SDL_Quit();
+        return false;
+    }
+
+    return true;
+}
+
+// 释放 SDL 呈现相关资源并关闭 SDL 子系统。
+void DestroySdlPresentationResources(
+    SDL_Window* window,
+    SDL_Renderer* presentRenderer,
+    SDL_Texture* framebufferTexture)
+{
+    if (framebufferTexture != nullptr) {
+        SDL_DestroyTexture(framebufferTexture);
+    }
+    if (presentRenderer != nullptr) {
+        SDL_DestroyRenderer(presentRenderer);
+    }
+    if (window != nullptr) {
+        SDL_DestroyWindow(window);
+    }
+    SDL_Quit();
+}
+
+/**
+ * @brief 初始化每帧统计状态。
+ */
+FrameRuntimeState InitializeFrameRuntimeState()
+{
+    FrameRuntimeState frameState;
+    frameState.perfFrequency = SDL_GetPerformanceFrequency();
+    frameState.fpsWindowStartCounter = SDL_GetPerformanceCounter();
+    frameState.lastFrameCounter = frameState.fpsWindowStartCounter;
+    frameState.fpsFrameCount = 0;
+    return frameState;
+}
+
+/**
+ * @brief 计算当前帧 deltaTime，并推进帧计时游标。
+ */
+float BeginFrameTiming(FrameRuntimeState& frameState)
+{
+    const Uint64 nowCounter = SDL_GetPerformanceCounter();
+    const float deltaTime = static_cast<float>(nowCounter - frameState.lastFrameCounter)
+        / static_cast<float>(frameState.perfFrequency);
+    frameState.lastFrameCounter = nowCounter;
+    return deltaTime;
+}
+
+/**
+ * @brief 根据统计窗口刷新 FPS 到窗口标题。
+ */
+void UpdateWindowTitleWithFps(SDL_Window* window, FrameRuntimeState& frameState)
+{
+    ++frameState.fpsFrameCount;
+    const Uint64 fpsCounter = SDL_GetPerformanceCounter();
+    const double elapsedSeconds = static_cast<double>(fpsCounter - frameState.fpsWindowStartCounter)
+        / static_cast<double>(frameState.perfFrequency);
+    if (elapsedSeconds >= 0.5) {
+        const double fps = static_cast<double>(frameState.fpsFrameCount) / elapsedSeconds;
+        char title[128];
+        std::snprintf(title, sizeof(title), "mySoftRender - FPS: %.1f", fps);
+        SDL_SetWindowTitle(window, title);
+
+        frameState.fpsFrameCount = 0;
+        frameState.fpsWindowStartCounter = fpsCounter;
+    }
+}
+
+/**
+ * @brief 用当前相机方向初始化鼠标视角控制，并默认开启鼠标捕获。
+ */
+void InitializeCameraControlState(Scene& scene, SDL_Window* window, InputRuntimeState& inputState)
+{
+    if (scene.camera) {
+        ExtractYawPitchFromCamera(*scene.camera, inputState.cameraYawDeg, inputState.cameraPitchDeg);
+        ApplyYawPitchToCamera(*scene.camera, inputState.cameraYawDeg, inputState.cameraPitchDeg);
+    }
+
+    SetMouseCaptureState(
+        true,
+        window,
+        inputState.mouseCaptureEnabled,
+        inputState.mouseCaptureSupported);
+}
+
+/**
+ * @brief 处理鼠标相对移动事件，更新 FPS 相机的 yaw/pitch。
+ */
+void HandleMouseMotionEvent(
+    const SDL_Event& event,
+    Scene& scene,
+    const DebugUI& debugUI,
+    InputRuntimeState& inputState)
+{
+    if (event.type != SDL_MOUSEMOTION
+        || !inputState.mouseCaptureEnabled
+        || !scene.camera
+        || debugUI.wantsMouseCapture()) {
+        return;
+    }
+
+    inputState.cameraYawDeg += static_cast<float>(event.motion.xrel) * kMouseSensitivityDegPerPixel;
+    inputState.cameraPitchDeg -= static_cast<float>(event.motion.yrel) * kMouseSensitivityDegPerPixel;
+
+    if (inputState.cameraPitchDeg > kMaxPitchDeg) {
+        inputState.cameraPitchDeg = kMaxPitchDeg;
+    }
+    if (inputState.cameraPitchDeg < -kMaxPitchDeg) {
+        inputState.cameraPitchDeg = -kMaxPitchDeg;
+    }
+
+    ApplyYawPitchToCamera(*scene.camera, inputState.cameraYawDeg, inputState.cameraPitchDeg);
+}
+
+/**
+ * @brief 处理 KEYDOWN/KEYUP 对应的 WASD 连续移动状态。
+ */
+void HandleMovementKeyEvent(
+    const SDL_Event& event,
+    const DebugUI& debugUI,
+    InputRuntimeState& inputState)
+{
+    if ((event.type != SDL_KEYDOWN && event.type != SDL_KEYUP) || debugUI.wantsKeyboardCapture()) {
+        return;
+    }
+
+    const bool isKeyDown = (event.type == SDL_KEYDOWN);
+    const SDL_Keycode sym = event.key.keysym.sym;
+    switch (sym) {
+    case SDLK_w:
+        inputState.moveForward = isKeyDown;
+        break;
+    case SDLK_s:
+        inputState.moveBackward = isKeyDown;
+        break;
+    case SDLK_a:
+        inputState.moveLeft = isKeyDown;
+        break;
+    case SDLK_d:
+        inputState.moveRight = isKeyDown;
+        break;
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief 处理功能键（F1~F5、ESC）对应的运行时开关与退出逻辑。
+ */
+void HandleFunctionKeyEvent(
+    const SDL_Event& event,
+    bool& running,
+    SoftwareRenderer& renderer,
+    DebugUI& debugUI,
+    SDL_Window* window,
+    InputRuntimeState& inputState)
+{
+    if (event.type != SDL_KEYDOWN || event.key.repeat != 0) {
+        return;
+    }
+
+    const SDL_Keycode key = event.key.keysym.sym;
+
+    if (key == SDLK_F4) {
+        debugUI.toggleVisible();
+        std::cout << "Debug UI: "
+                  << (debugUI.isVisible() ? "ON" : "OFF")
+                  << " (press F4 to toggle panel)" << '\n';
+        return;
+    }
+
+    if (key == SDLK_F5) {
+        SetMouseCaptureState(
+            !inputState.mouseCaptureEnabled,
+            window,
+            inputState.mouseCaptureEnabled,
+            inputState.mouseCaptureSupported);
+        std::cout << "Mouse capture: "
+                  << (inputState.mouseCaptureEnabled ? "ON" : "OFF")
+                  << " (press F5 to toggle for ImGui interaction)" << '\n';
+        return;
+    }
+
+    if (debugUI.wantsKeyboardCapture()) {
+        return;
+    }
+
+    switch (key) {
+    case SDLK_ESCAPE:
+        running = false;
+        break;
+    case SDLK_F1:
+        renderer.toggleWireframeOverlay();
+        std::cout << "Wireframe overlay: "
+                  << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
+                  << " (press F1 to toggle)" << '\n';
+        break;
+    case SDLK_F2:
+        renderer.toggleBackfaceCulling();
+        std::cout << "Back-face culling: "
+                  << (renderer.backfaceCullingEnabled() ? "ON" : "OFF")
+                  << " (press F2 to toggle)" << '\n';
+        break;
+    case SDLK_F3:
+        renderer.setMsaaSampleCount(NextMsaaSampleCount(renderer.msaaSampleCount()));
+        std::cout << "MSAA samples: "
+                  << renderer.msaaSampleCount()
+                  << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+        break;
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief 处理窗口焦点事件，失焦时释放鼠标并清空移动输入。
+ */
+void HandleWindowFocusEvent(const SDL_Event& event, SDL_Window* window, InputRuntimeState& inputState)
+{
+    if (event.type != SDL_WINDOWEVENT || event.window.event != SDL_WINDOWEVENT_FOCUS_LOST) {
+        return;
+    }
+
+    ResetMovementInputState(inputState);
+    if (inputState.mouseCaptureEnabled) {
+        SetMouseCaptureState(
+            false,
+            window,
+            inputState.mouseCaptureEnabled,
+            inputState.mouseCaptureSupported);
+    }
+}
+
+/**
+ * @brief 轮询并处理本帧所有 SDL 事件。
+ */
+void PollAndProcessEvents(
+    bool& running,
+    Scene& scene,
+    SoftwareRenderer& renderer,
+    DebugUI& debugUI,
+    SDL_Window* window,
+    InputRuntimeState& inputState)
+{
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        debugUI.processEvent(event);
+
+        if (event.type == SDL_QUIT) {
+            running = false;
+        }
+
+        HandleMouseMotionEvent(event, scene, debugUI, inputState);
+        HandleMovementKeyEvent(event, debugUI, inputState);
+        HandleFunctionKeyEvent(event, running, renderer, debugUI, window, inputState);
+        HandleWindowFocusEvent(event, window, inputState);
+    }
+}
+
+/**
+ * @brief 在主循环安全点处理场景切换，避免 UI 回调中直接重建场景。
+ */
+void ProcessPendingSceneSwitch(
+    Scene& scene,
+    DebugUI& debugUI,
+    const SceneBuildResources& sceneResources,
+    const std::vector<SkyboxAssetEntry>& skyboxAssets,
+    ScenePreset& currentScenePreset,
+    int& currentSkyboxIndex,
+    InputRuntimeState& inputState)
+{
+    if (!debugUI.hasPendingSceneSwitch()) {
+        return;
+    }
+
+    const int requestedPresetIndex = debugUI.consumePendingSceneSwitch();
+    const ScenePreset requestedPreset = ScenePresetFromIndex(requestedPresetIndex);
+    if (requestedPreset != currentScenePreset) {
+        BuildSceneByPreset(scene, requestedPreset, sceneResources);
+        if (currentSkyboxIndex >= 0) {
+            (void)ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex);
+        }
+        currentScenePreset = requestedPreset;
+        debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+
+        ResetMovementInputState(inputState);
+        if (scene.camera) {
+            ExtractYawPitchFromCamera(*scene.camera, inputState.cameraYawDeg, inputState.cameraPitchDeg);
+            ApplyYawPitchToCamera(*scene.camera, inputState.cameraYawDeg, inputState.cameraPitchDeg);
+        }
+
+        std::cout << "Scene switched to: " << ScenePresetName(currentScenePreset) << '\n';
+    } else {
+        debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+    }
+}
+
+/**
+ * @brief 在主循环安全点处理天空盒切换请求。
+ */
+void ProcessPendingSkyboxSwitch(
+    Scene& scene,
+    DebugUI& debugUI,
+    const std::vector<SkyboxAssetEntry>& skyboxAssets,
+    int& currentSkyboxIndex)
+{
+    if (!debugUI.hasPendingSkyboxSwitch()) {
+        return;
+    }
+
+    const int requestedSkyboxIndex = debugUI.consumePendingSkyboxSwitch();
+    const bool indexValid = requestedSkyboxIndex >= 0
+        && requestedSkyboxIndex < static_cast<int>(skyboxAssets.size());
+
+    if (indexValid && requestedSkyboxIndex != currentSkyboxIndex) {
+        if (ApplySkyboxByIndex(scene, skyboxAssets, requestedSkyboxIndex)) {
+            currentSkyboxIndex = requestedSkyboxIndex;
+            std::cout << "Skybox switched to: " << scene.skyboxName << '\n';
+        }
+    }
+    debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
+}
+
+/**
+ * @brief 执行每帧的输入驱动更新与场景状态同步。
+ */
+void UpdateSceneForFrame(
+    Scene& scene,
+    const DebugUI& debugUI,
+    InputRuntimeState& inputState,
+    float deltaTime)
+{
+    if (debugUI.wantsKeyboardCapture()) {
+        ResetMovementInputState(inputState);
+    }
+
+    if (scene.camera) {
+        MoveCameraWithInput(
+            *scene.camera,
+            inputState.moveForward,
+            inputState.moveBackward,
+            inputState.moveLeft,
+            inputState.moveRight,
+            deltaTime);
+    }
+
+    if (!scene.lights.empty() && scene.lights[0]
+        && scene.lightProxyObjectIndex >= 0
+        && scene.lightProxyObjectIndex < static_cast<int>(scene.objects.size())
+        && scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]) {
+        scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]->setPosition(scene.lights[0]->position());
+    }
+
+    scene.RotateObjects(deltaTime);
+}
+
+// 执行一帧渲染与 UI 呈现。
+bool RenderAndPresentFrame(
+    Scene& scene,
+    SoftwareRenderer& renderer,
+    DebugUI& debugUI,
+    SDL_Renderer* presentRenderer,
+    SDL_Texture* framebufferTexture)
+{
+    renderer.clear({ 0, 0, 0, 255 });
+    renderer.DrawScene(scene);
+
+    debugUI.beginFrame();
+    debugUI.drawShadowPanel(scene, renderer);
+
+    if (SDL_UpdateTexture(
+            framebufferTexture,
+            nullptr,
+            renderer.colorBuffer(),
+            renderer.width() * static_cast<int>(sizeof(std::uint32_t)))
+        != 0) {
+        std::cerr << "SDL_UpdateTexture failed: " << SDL_GetError() << '\n';
+        return false;
+    }
+
+    SDL_RenderClear(presentRenderer);
+    SDL_RenderCopy(presentRenderer, framebufferTexture, nullptr, nullptr);
+    debugUI.render();
+    SDL_RenderPresent(presentRenderer);
+    return true;
+}
+
+int main(int argc, char* argv[])
+{
+    const char* argv0 = argc > 0 ? argv[0] : nullptr;
+
+    // 解析资源路径并加载必要的纹理与模型资源。
+    const std::string sphereTexturePath = ResolveSphereTexturePath(argv0);
+    const std::string maryTexturePath = ResolveMaryTexturePath(argv0);
+    const std::string maryObjPath = ResolveMaryObjPath(argv0);
+    const std::string floorObjPath = ResolveFloorPath(argv0);
+    const std::string cubemapRootPath = ResolveCubemapRootPath(argv0);
+
+    std::shared_ptr<Texture2D> sphereTexture = LoadSphereTextureWithFallback(sphereTexturePath);
+    std::shared_ptr<Texture2D> maryTexture = LoadMaryTextureOptional(maryTexturePath);
 
     Scene scene;
     SceneBuildResources sceneResources;
@@ -670,73 +1210,15 @@ int main(int argc, char* argv[])
 
     const std::vector<SkyboxAssetEntry> skyboxAssets = DiscoverSkyboxAssets(cubemapRootPath);
     const std::vector<std::string> skyboxNames = BuildSkyboxNames(skyboxAssets);
-    int currentSkyboxIndex = -1;
-
-    if (!skyboxAssets.empty()) {
-        currentSkyboxIndex = 0;
-        if (ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex)) {
-            std::cout << "Skybox loaded: " << scene.skyboxName
-                      << " (" << skyboxAssets[static_cast<std::size_t>(currentSkyboxIndex)].directoryPath << ")" << '\n';
-        }
-        std::cout << "Skybox assets discovered: " << skyboxAssets.size() << '\n';
-    } else {
-        scene.skyboxTexture.reset();
-        scene.skyboxName = "None";
-        scene.enableSkybox = false;
-        std::cout << "Skybox: no valid cubemap found under: " << cubemapRootPath << '\n';
-    }
+    int currentSkyboxIndex = InitializeSkyboxSelection(scene, skyboxAssets, cubemapRootPath);
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
-    renderer.setBackfaceCullingEnabled(true);
-    renderer.setMsaaSampleCount(1);
-    renderer.SetFragmentShader(BlingPhongShader);
-    std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
-    std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
-    std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
-    std::cout << "Debug UI: ON (press F4 to toggle panel)" << '\n';
-    std::cout << "Mouse capture: ON (press F5 to toggle for ImGui interaction)" << '\n';
+    ConfigureRendererDefaults(renderer);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
-        std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
-        return 1;
-    }
-
-    SDL_Window* window = SDL_CreateWindow(
-        "mySoftRender",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        Window::kWindowWidth,
-        Window::kWindowHeight,
-        SDL_WINDOW_SHOWN);
-
-    if (window == nullptr) {
-        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << '\n';
-        SDL_Quit();
-        return 1;
-    }
-
-    const Uint32 rendererFlags = SDL_RENDERER_ACCELERATED
-        | (Window::kEnablePresentVSync ? SDL_RENDERER_PRESENTVSYNC : 0u);
-    SDL_Renderer* presentRenderer = SDL_CreateRenderer(window, -1, rendererFlags);
-    if (presentRenderer == nullptr) {
-        std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << '\n';
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Texture* framebufferTexture = SDL_CreateTexture(
-        presentRenderer,
-        SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING,
-        Window::kWindowWidth,
-        Window::kWindowHeight);
-
-    if (framebufferTexture == nullptr) {
-        std::cerr << "SDL_CreateTexture failed: " << SDL_GetError() << '\n';
-        SDL_DestroyRenderer(presentRenderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+    SDL_Window* window = nullptr;
+    SDL_Renderer* presentRenderer = nullptr;
+    SDL_Texture* framebufferTexture = nullptr;
+    if (!CreateSdlPresentationResources(window, presentRenderer, framebufferTexture)) {
         return 1;
     }
 
@@ -749,261 +1231,33 @@ int main(int argc, char* argv[])
     debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
 
     bool running = true;
-    const Uint64 perfFrequency = SDL_GetPerformanceFrequency();
-    Uint64 fpsWindowStartCounter = SDL_GetPerformanceCounter();
-    Uint64 lastFrameCounter = fpsWindowStartCounter;
-    int fpsFrameCount = 0;
-    bool moveForward = false;
-    bool moveBackward = false;
-    bool moveLeft = false;
-    bool moveRight = false;
-
-    float cameraYawDeg = 0.0f;
-    float cameraPitchDeg = 0.0f;
-    constexpr float kMouseSensitivityDegPerPixel = 0.12f;
-    constexpr float kMaxPitchDeg = 89.0f;
-    bool mouseCaptureEnabled = false;
-    bool mouseCaptureSupported = true;
-
-    if (scene.camera) {
-        ExtractYawPitchFromCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
-        ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
-    }
-
-    SetMouseCaptureState(true, window, mouseCaptureEnabled, mouseCaptureSupported);
+    FrameRuntimeState frameState = InitializeFrameRuntimeState();
+    InputRuntimeState inputState;
+    InitializeCameraControlState(scene, window, inputState);
 
     while (running) {
-        const Uint64 nowCounter = SDL_GetPerformanceCounter();
-        const float deltaTime = static_cast<float>(nowCounter - lastFrameCounter) / static_cast<float>(perfFrequency);
-        lastFrameCounter = nowCounter;
-
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            debugUI.processEvent(event);
-
-            if (event.type == SDL_QUIT) {
-                running = false;
-            }
-
-            // 将鼠标相对位移转换为 FPS 相机的 yaw/pitch 变化。保持窗口聚焦并移动鼠标，即可水平转向与上下俯仰。
-            if (event.type == SDL_MOUSEMOTION && mouseCaptureEnabled && scene.camera && !debugUI.wantsMouseCapture()) {
-                cameraYawDeg += static_cast<float>(event.motion.xrel) * kMouseSensitivityDegPerPixel;
-                cameraPitchDeg -= static_cast<float>(event.motion.yrel) * kMouseSensitivityDegPerPixel;
-
-                if (cameraPitchDeg > kMaxPitchDeg) {
-                    cameraPitchDeg = kMaxPitchDeg;
-                }
-                if (cameraPitchDeg < -kMaxPitchDeg) {
-                    cameraPitchDeg = -kMaxPitchDeg;
-                }
-
-                ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
-            }
-
-            // 用 KEYDOWN/KEYUP 维护 WASD 持续按下状态，避免依赖全局键盘状态数组。按下时置 true，抬起时置 false，后续移动逻辑直接读取该状态。
-            if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !debugUI.wantsKeyboardCapture()) {
-                const bool isKeyDown = (event.type == SDL_KEYDOWN);
-                const SDL_Keycode sym = event.key.keysym.sym;
-                switch (sym) {
-                case SDLK_w:
-                    moveForward = isKeyDown;
-                    break;
-                case SDLK_s:
-                    moveBackward = isKeyDown;
-                    break;
-                case SDLK_a:
-                    moveLeft = isKeyDown;
-                    break;
-                case SDLK_d:
-                    moveRight = isKeyDown;
-                    break;
-                default:
-                    break;
-                }
-            }
-
-            // 功能键使用 KEYDOWN 的边沿触发（repeat==0），避免连续触发。单击一次 F1/F2/F3/ESC，只会触发一次状态切换或退出。
-            if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
-                const SDL_Keycode key = event.key.keysym.sym;
-
-                if (key == SDLK_F4) {
-                    debugUI.toggleVisible();
-                    std::cout << "Debug UI: "
-                              << (debugUI.isVisible() ? "ON" : "OFF")
-                              << " (press F4 to toggle panel)" << '\n';
-                    continue;
-                }
-
-                if (key == SDLK_F5) {
-                    SetMouseCaptureState(!mouseCaptureEnabled, window, mouseCaptureEnabled, mouseCaptureSupported);
-                    std::cout << "Mouse capture: "
-                              << (mouseCaptureEnabled ? "ON" : "OFF")
-                              << " (press F5 to toggle for ImGui interaction)" << '\n';
-                    continue;
-                }
-
-                if (debugUI.wantsKeyboardCapture()) {
-                    continue;
-                }
-
-                switch (key) {
-                case SDLK_ESCAPE:
-                    running = false;
-                    break;
-                case SDLK_F1:
-                    renderer.toggleWireframeOverlay();
-                    std::cout << "Wireframe overlay: "
-                              << (renderer.wireframeOverlayEnabled() ? "ON" : "OFF")
-                              << " (press F1 to toggle)" << '\n';
-                    break;
-                case SDLK_F2:
-                    renderer.toggleBackfaceCulling();
-                    std::cout << "Back-face culling: "
-                              << (renderer.backfaceCullingEnabled() ? "ON" : "OFF")
-                              << " (press F2 to toggle)" << '\n';
-                    break;
-                case SDLK_F3:
-                    renderer.setMsaaSampleCount(NextMsaaSampleCount(renderer.msaaSampleCount()));
-                    std::cout << "MSAA samples: "
-                              << renderer.msaaSampleCount()
-                              << "x (press F3 to cycle 1x/2x/4x)" << '\n';
-                    break;
-                default:
-                    break;
-                }
-            }
-
-            // 窗口焦点切换时同步鼠标捕获状态，并重置移动状态。失焦时释放鼠标，聚焦时恢复相对模式，避免输入卡键与鼠标漂移。
-            if (event.type == SDL_WINDOWEVENT) {
-                if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-                    moveForward = false;
-                    moveBackward = false;
-                    moveLeft = false;
-                    moveRight = false;
-
-                    if (mouseCaptureEnabled) {
-                        SetMouseCaptureState(false, window, mouseCaptureEnabled, mouseCaptureSupported);
-                    }
-                }
-            }
-        }
+        const float deltaTime = BeginFrameTiming(frameState);
+        PollAndProcessEvents(running, scene, renderer, debugUI, window, inputState);
 
         if (!running) {
             break;
         }
 
-        // 在主循环安全点处理场景切换请求，避免在 UI 绘制阶段直接重建场景造成生命周期耦合。
-        if (debugUI.hasPendingSceneSwitch()) {
-            const int requestedPresetIndex = debugUI.consumePendingSceneSwitch();
-            const ScenePreset requestedPreset = ScenePresetFromIndex(requestedPresetIndex);
-            if (requestedPreset != currentScenePreset) {
-                BuildSceneByPreset(scene, requestedPreset, sceneResources);
-                if (currentSkyboxIndex >= 0) {
-                    (void)ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex);
-                }
-                currentScenePreset = requestedPreset;
-                debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
+        ProcessPendingSceneSwitch(scene,debugUI,sceneResources,skyboxAssets,currentScenePreset,currentSkyboxIndex,inputState);
 
-                // 切场景后重置连续输入状态，避免沿用旧场景下的按键状态导致相机瞬间漂移。
-                moveForward = false;
-                moveBackward = false;
-                moveLeft = false;
-                moveRight = false;
+        ProcessPendingSkyboxSwitch(scene, debugUI, skyboxAssets, currentSkyboxIndex);
 
-                if (scene.camera) {
-                    ExtractYawPitchFromCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
-                    ApplyYawPitchToCamera(*scene.camera, cameraYawDeg, cameraPitchDeg);
-                }
+        UpdateSceneForFrame(scene, debugUI, inputState, deltaTime);
 
-                std::cout << "Scene switched to: " << ScenePresetName(currentScenePreset) << '\n';
-            } else {
-                debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
-            }
-        }
-
-        // 在主循环安全点处理天空盒切换请求，避免 UI 层直接切换资源导致生命周期耦合。
-        if (debugUI.hasPendingSkyboxSwitch()) {
-            const int requestedSkyboxIndex = debugUI.consumePendingSkyboxSwitch();
-            const bool indexValid = requestedSkyboxIndex >= 0
-                && requestedSkyboxIndex < static_cast<int>(skyboxAssets.size());
-
-            if (indexValid && requestedSkyboxIndex != currentSkyboxIndex) {
-                if (ApplySkyboxByIndex(scene, skyboxAssets, requestedSkyboxIndex)) {
-                    currentSkyboxIndex = requestedSkyboxIndex;
-                    std::cout << "Skybox switched to: " << scene.skyboxName << '\n';
-                }
-            }
-            debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
-        }
-
-        if (debugUI.wantsKeyboardCapture()) {
-            moveForward = false;
-            moveBackward = false;
-            moveLeft = false;
-            moveRight = false;
-        }
-
-        if (scene.camera) {
-            MoveCameraWithInput(
-                *scene.camera,
-                moveForward,
-                moveBackward,
-                moveLeft,
-                moveRight,
-                deltaTime);
-        }
-
-        // 每帧同步光源代理球位置，确保相机看到的光源标记与真实点光位置一致。当 UI 拖动点光源位置时，代理球会在同一帧跟随更新。
-        if (!scene.lights.empty()
-            && scene.lights[0]
-            && scene.lightProxyObjectIndex >= 0
-            && scene.lightProxyObjectIndex < static_cast<int>(scene.objects.size())
-            && scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]) {
-            scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]->setPosition(scene.lights[0]->position());
-        }
-
-        scene.RotateObjects(deltaTime);
-
-        renderer.clear({ 0, 0, 0, 255 });
-        renderer.DrawScene(scene);
-
-        debugUI.beginFrame();
-        debugUI.drawShadowPanel(scene, renderer);
-
-        if (SDL_UpdateTexture(
-                framebufferTexture,
-                nullptr,
-                renderer.colorBuffer(),
-                renderer.width() * static_cast<int>(sizeof(std::uint32_t)))
-            != 0) {
-            std::cerr << "SDL_UpdateTexture failed: " << SDL_GetError() << '\n';
+        if (!RenderAndPresentFrame(scene, renderer, debugUI, presentRenderer, framebufferTexture)) {
             break;
         }
 
-        SDL_RenderClear(presentRenderer);
-        SDL_RenderCopy(presentRenderer, framebufferTexture, nullptr, nullptr);
-        debugUI.render();
-        SDL_RenderPresent(presentRenderer);
-
-        ++fpsFrameCount;
-        const Uint64 fpsCounter = SDL_GetPerformanceCounter();
-        const double elapsedSeconds = static_cast<double>(fpsCounter - fpsWindowStartCounter) / static_cast<double>(perfFrequency);
-        if (elapsedSeconds >= 0.5) {
-            const double fps = static_cast<double>(fpsFrameCount) / elapsedSeconds;
-            char title[128];
-            std::snprintf(title, sizeof(title), "mySoftRender - FPS: %.1f", fps);
-            SDL_SetWindowTitle(window, title);
-
-            fpsFrameCount = 0;
-            fpsWindowStartCounter = fpsCounter;
-        }
+        UpdateWindowTitleWithFps(window, frameState);
     }
 
     debugUI.shutdown();
-    SDL_DestroyTexture(framebufferTexture);
-    SDL_DestroyRenderer(presentRenderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    DestroySdlPresentationResources(window, presentRenderer, framebufferTexture);
 
     return 0;
 }
