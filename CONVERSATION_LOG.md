@@ -878,4 +878,106 @@
 - src/main.cpp
 - CONVERSATION_LOG.md
 
+## 2026-04-16 会话 051
+
+### 实现功能
+
+- 按“将环境光任务规划升级为 IBL 环境光照方案”的需求，重写任务文档内容。
+- 将原文档从“常量环境光增强”调整为“分阶段 IBL 落地方案”：
+	- 阶段 A：Diffuse IBL（法线方向环境采样）
+	- 阶段 B：Specular IBL（Prefilter + BRDF LUT）
+- 文档中补充了按文件与函数粒度的修改清单，覆盖 `Scene` 参数扩展、`BlingPhongShader` 接入点、`DebugUI` 控件扩展、资源目录规范与回退链策略。
+- 补充了 IBL 实施顺序、验收标准与风险规避说明，便于按里程碑推进。
+- 本次仅修改任务文档，不改动渲染逻辑代码。
+
+### 修改文件
+
+- AMBIENT_SHADING_TASK.md
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 052
+
+### 实现功能
+
+- 基于 `AMBIENT_SHADING_TASK.md` 落地基础 IBL（阶段 A，Diffuse IBL），保持现有 Blinn-Phong 主流程与阴影流程不重构。
+- 在 `Scene` 中新增 `IBLSettings` 与 `iblIrradianceMap` 字段：
+	- `enableIBL`
+	- `enableDiffuseIBL`
+	- `diffuseIntensity`
+	- `iblIrradianceMap`（为空时回退到 `skyboxTexture`）
+- 在 `main.cpp` 新增环境光计算辅助函数并接入 `BlingPhongShader`：
+	- `ComputeConstantAmbientLighting`
+	- `ComputeDiffuseIblLighting`
+	- `ComputeAmbientLighting`
+- 将环境光合成从“仅常量环境光”升级为“常量环境光 + Diffuse IBL”，并保持“阴影仅衰减直射项”的规则不变。
+- 在 `ResetSceneState` 中补齐 IBL 默认值初始化：启用 IBL、启用 Diffuse IBL、默认强度 `0.25f`。
+- 在 `DebugUI` 的 Light 页签新增环境光与 IBL 调试控件：
+	- Ambient Color / Ambient Intensity
+	- Enable IBL / Diffuse IBL / Diffuse IBL Intensity
+	- Skybox 状态显示与无可用环境图时的回退提示
+- 为新增逻辑补充中文注释，遵循仓库注释规范。
+- 完成 Debug 与 Release 双构建验证，工程编译通过。
+
+### 修改文件
+
+- include/Scene.h
+- src/main.cpp
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 053
+
+### 实现功能
+
+- 按“将 skybox 配置从 Light 中独立出来”的需求，完成 DebugUI 模块拆分。
+- 在 `DebugUI` 的 Tab 栏新增独立 `Skybox` 页签，并将以下内容迁移至该模块：
+	- Skybox 下拉切换（保留原有 pending 请求机制）
+	- IBL 开关与强度（Enable IBL / Diffuse IBL / Diffuse IBL Intensity）
+	- Skybox 当前名称与环境图可用性提示
+	- Skybox 切换排队提示文案
+- `Light` 页签只保留环境光参数与直射光参数，不再混合 skybox/IBL 配置。
+- `Scene` 区域保留场景预设与统计信息，移除 skybox 下拉，避免与 Light 混排。
+- 完成 Debug 构建验证与错误检查，工程编译通过。
+
+### 修改文件
+
+- include/DebugUI.h
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 054
+
+### 实现功能
+
+- 按需求调整场景切换内容：
+	- 场景 1：`model + floor + light`，默认并强制关闭天空盒背景。
+	- 场景 2：单球体（无贴图）、无光源、启用天空盒背景。
+- 更新场景构建逻辑：
+	- 重写 `BuildScenePresetTwo` 为单球体无贴图场景，移除地板与光源创建。
+	- 在 `BuildScenePresetOne` 中显式关闭 `scene.enableSkybox`。
+- 更新场景切换与天空盒切换策略：
+	- 场景切换到场景 1 时固定关闭天空盒。
+	- 场景切换到场景 2 时按当前天空盒索引应用天空盒资源。
+	- 在场景 1 中即使没有天空盒切换请求，也会持续保持天空盒关闭，避免误开启。
+- 同步更新场景名称文案（`main.cpp` 与 `DebugUI.cpp`）。
+- 完成 Debug 构建与错误检查，工程编译通过。
+
+### 修改文件
+
+- src/main.cpp
+- src/DebugUI.cpp
+- CONVERSATION_LOG.md
+
+## 2026-04-16 会话 055
+
+### 实现功能
+
+- 按反馈修正日志维护策略：后续会话记录统一追加到 `CONVERSATION_LOG.md` 文件尾部（tail），避免中段插入造成顺序错乱。
+- 将该约定沉淀到 `Experience.md`，作为后续执行的固定预防措施。
+
+### 修改文件
+
+- Experience.md
+- CONVERSATION_LOG.md
+
 

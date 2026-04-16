@@ -36,6 +36,16 @@ struct ShadowSettings
     float pcssLightSize = 0.03f;
 };
 
+/**
+ * @brief IBL 环境光照配置（阶段 A：仅启用 Diffuse IBL）。
+ */
+struct IBLSettings
+{
+    bool enableIBL = true;
+    bool enableDiffuseIBL = true;
+    float diffuseIntensity = 0.25f;
+};
+
 class Scene
 {
 public:
@@ -45,6 +55,8 @@ public:
 
     glm::vec3 ambientLightColor = glm::vec3(1.0f); // 场景的环境光颜色
     float ambientLightIntensity = 0.5f; // 场景的环境光强度
+    IBLSettings iblSettings; // 场景 IBL 配置（运行时可调）
+    std::shared_ptr<CubemapTexture> iblIrradianceMap; // Diffuse IBL 使用的 irradiance 资源（为空时回退 skyboxTexture）
     ShadowSettings shadowSettings; // 场景阴影配置
     bool enableSkybox = true; // 是否启用天空盒背景绘制
     std::shared_ptr<CubemapTexture> skyboxTexture; // 当前场景绑定的天空盒资源

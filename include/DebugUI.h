@@ -68,6 +68,9 @@ private:
     // 绘制场景级 UI（预设切换、天空盒切换、基础状态信息）。
     void drawSceneSection(Scene& scene);
 
+    // 绘制 Skybox 页签内容（天空盒资源与 IBL 相关配置）。
+    void drawSkyboxTab(Scene& scene);
+
     // 绘制 Shadow 页签内容（阴影参数与过滤模式）。
     void drawShadowTab(Scene& scene);
 

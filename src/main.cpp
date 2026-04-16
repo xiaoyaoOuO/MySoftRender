@@ -359,9 +359,9 @@ ScenePreset ScenePresetFromIndex(int presetIndex)
 const char* ScenePresetName(ScenePreset preset)
 {
     if (preset == ScenePreset::Scene2DualSphereFloorPoint) {
-        return "Scene 2: Dual Spheres + Floor + Point Light";
+        return "Scene 2: Sphere (No Texture/No Light) + Skybox";
     }
-    return "Scene 1: Mary + Floor + Point Light";
+    return "Scene 1: Mary + Floor + Point Light (Skybox Off)";
 }
 
 /**
@@ -383,6 +383,9 @@ void ResetSceneState(
 
     scene.ambientLightColor = glm::vec3(1.0f);
     scene.ambientLightIntensity = 0.08f;
+    scene.iblSettings.enableIBL = true;
+    scene.iblSettings.enableDiffuseIBL = true;
+    scene.iblSettings.diffuseIntensity = 0.25f;
 
     Scene::instance = &scene;
 }
@@ -444,6 +447,7 @@ void AppendPointLightAndProxy(
 void BuildScenePresetOne(Scene& scene, const SceneBuildResources& resources)
 {
     ResetSceneState(scene, glm::vec3(0.0f, 0.7f, 3.4f), glm::vec3(0.0f, -0.4f, -2.0f));
+    scene.enableSkybox = false;
 
     ObjMeshData maryMesh;
     const bool maryLoadOk = ObjLoader::LoadFromFile(resources.maryObjPath, maryMesh);
@@ -471,33 +475,18 @@ void BuildScenePresetOne(Scene& scene, const SceneBuildResources& resources)
 }
 
 /**
- * @brief 构建场景 2：双球体 + 地板 + 中上方点光源。
+ * @brief 构建场景 2：无贴图球体 + 无光源 + 天空盒。
  */
 void BuildScenePresetTwo(Scene& scene, const SceneBuildResources& resources)
 {
-    ResetSceneState(scene, glm::vec3(0.0f, 0.9f, 3.8f), glm::vec3(0.0f, -0.2f, -2.0f));
+    (void)resources;
+    ResetSceneState(scene, glm::vec3(0.0f, 0.65f, 3.2f), glm::vec3(0.0f, -0.15f, -2.0f));
 
-    auto leftSphere = std::make_unique<Sphere>(0.5f, 2, glm::vec3(1.0f, 1.0f, 1.0f));
-    leftSphere->setPosition(glm::vec3(-0.85f, -0.45f, -2.0f));
-    leftSphere->setTexture(resources.sphereTexture);
-    scene.objects.emplace_back(std::move(leftSphere));
+    auto sphere = std::make_unique<Sphere>(0.65f, 2, glm::vec3(0.9f, 0.9f, 0.9f));
+    sphere->setPosition(glm::vec3(0.0f, -0.35f, -2.0f));
+    scene.objects.emplace_back(std::move(sphere));
 
-    auto rightSphere = std::make_unique<Sphere>(0.5f, 2, glm::vec3(0.95f, 0.95f, 1.0f));
-    rightSphere->setPosition(glm::vec3(0.85f, -0.45f, -2.0f));
-    rightSphere->setTexture(resources.sphereTexture);
-    scene.objects.emplace_back(std::move(rightSphere));
-
-    (void)AppendFloorObject(
-        scene,
-        resources.floorObjPath,
-        glm::vec3(0.0f, -1.0f, -2.0f),
-        glm::vec3(0.08f, 1.0f, 0.08f));
-
-    AppendPointLightAndProxy(
-        scene,
-        glm::vec3(0.0f, 1.75f, -2.0f),
-        glm::vec3(0.0f, -1.0f, 0.0f),
-        2.8f);
+    scene.enableSkybox = true;
 }
 
 /**
@@ -518,7 +507,6 @@ void BuildSceneByPreset(Scene& scene, ScenePreset preset, const SceneBuildResour
 /**
  * @brief 把颜色统一转换到 0~1 区间，兼容 0~1 与 0~255 两种输入习惯。
  * @param color 输入颜色，可为线性 0~1 或 8-bit 标准化前的 0~255。
- * @return 返回归一化后的 0~1 颜色。
  */
 glm::vec3 NormalizeColorToUnitRange(const glm::vec3& color)
 {
@@ -530,11 +518,59 @@ glm::vec3 NormalizeColorToUnitRange(const glm::vec3& color)
 }
 
 /**
+ * @brief 计算常量环境光（原有 ambientColor * ambientIntensity 逻辑）。
+ * @return 返回常量环境光线性颜色。
+ */
+glm::vec3 ComputeConstantAmbientLighting(const Scene& scene)
+{
+    const glm::vec3 ambientColor = NormalizeColorToUnitRange(scene.ambientLightColor);
+    return std::max(scene.ambientLightIntensity, 0.0f) * ambientColor;
+}
+
+/**
+ * @brief 计算 Diffuse IBL 环境光，优先 irradiance 贴图，缺失时回退到天空盒。
+ * @param worldNormal 片元世界法线。
+ */
+glm::vec3 ComputeDiffuseIblLighting(const Scene& scene, const glm::vec3& worldNormal)
+{
+    if (!scene.iblSettings.enableIBL || !scene.iblSettings.enableDiffuseIBL) {
+        return glm::vec3(0.0f);
+    }
+
+    const CubemapTexture* iblSource = nullptr;
+    if (scene.iblIrradianceMap && scene.iblIrradianceMap->valid()) {
+        iblSource = scene.iblIrradianceMap.get();
+    } else if (scene.skyboxTexture && scene.skyboxTexture->valid()) {
+        iblSource = scene.skyboxTexture.get();
+    }
+    if (iblSource == nullptr) {
+        return glm::vec3(0.0f);
+    }
+
+    glm::vec3 safeNormal = worldNormal;
+    if (glm::dot(safeNormal, safeNormal) <= 1e-12f) {
+        safeNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+    } else {
+        safeNormal = glm::normalize(safeNormal);
+    }
+
+    const glm::vec3 diffuseIblColor = iblSource->sample(safeNormal);
+    return std::max(scene.iblSettings.diffuseIntensity, 0.0f) * diffuseIblColor;
+}
+
+/**
+ * @brief 计算最终环境光分量：常量环境光 + Diffuse IBL。
+ * @param worldNormal 片元世界法线。
+ */
+glm::vec3 ComputeAmbientLighting(const Scene& scene, const glm::vec3& worldNormal)
+{
+    return ComputeConstantAmbientLighting(scene) + ComputeDiffuseIblLighting(scene, worldNormal);
+}
+
+/**
  * @brief 在世界坐标下执行 Blinn-Phong 光照并写回最终像素。
  * @param colorbuffer 最终颜色缓冲，函数会把结果写入 payload.bufferIndex。
  * @param payload 当前片元输入（颜色、法线、世界坐标、阴影可见性等）。
- * @param scene 场景数据（相机、环境光、光源列表）。
- * @return 无返回值。
  */
 void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)
 {
@@ -544,7 +580,6 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
     }
 
     const glm::vec3 albedo = glm::vec3(payload.color.r, payload.color.g, payload.color.b) / 255.0f;
-    const glm::vec3 ambientColor = NormalizeColorToUnitRange(scene.ambientLightColor);
 
     glm::vec3 normal = payload.normal;
     if (glm::dot(normal, normal) <= 1e-12f) {
@@ -560,7 +595,7 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
         viewDir = glm::normalize(viewDir);
     }
 
-    glm::vec3 ambientLighting = scene.ambientLightIntensity * ambientColor;
+    glm::vec3 ambientLighting = ComputeAmbientLighting(scene, normal);
     glm::vec3 directDiffuseLighting(0.0f);
     glm::vec3 specularLighting(0.0f);
     glm::vec3 emissiveLighting(0.0f);
@@ -1076,8 +1111,11 @@ void ProcessPendingSceneSwitch(
     const ScenePreset requestedPreset = ScenePresetFromIndex(requestedPresetIndex);
     if (requestedPreset != currentScenePreset) {
         BuildSceneByPreset(scene, requestedPreset, sceneResources);
-        if (currentSkyboxIndex >= 0) {
+        if (currentSkyboxIndex >= 0 && requestedPreset == ScenePreset::Scene2DualSphereFloorPoint) {
             (void)ApplySkyboxByIndex(scene, skyboxAssets, currentSkyboxIndex);
+        }
+        if (requestedPreset == ScenePreset::Scene1MaryFloorPoint) {
+            scene.enableSkybox = false;
         }
         currentScenePreset = requestedPreset;
         debugUI.setCurrentScenePreset(ScenePresetToIndex(currentScenePreset));
@@ -1101,9 +1139,14 @@ void ProcessPendingSkyboxSwitch(
     Scene& scene,
     DebugUI& debugUI,
     const std::vector<SkyboxAssetEntry>& skyboxAssets,
-    int& currentSkyboxIndex)
+    int& currentSkyboxIndex,
+    ScenePreset currentScenePreset)
 {
     if (!debugUI.hasPendingSkyboxSwitch()) {
+        // 场景一固定关闭天空盒，避免在该场景误开启背景渲染。
+        if (currentScenePreset == ScenePreset::Scene1MaryFloorPoint) {
+            scene.enableSkybox = false;
+        }
         return;
     }
 
@@ -1117,6 +1160,11 @@ void ProcessPendingSkyboxSwitch(
             std::cout << "Skybox switched to: " << scene.skyboxName << '\n';
         }
     }
+
+    if (currentScenePreset == ScenePreset::Scene1MaryFloorPoint) {
+        scene.enableSkybox = false;
+    }
+
     debugUI.setCurrentSkyboxIndex(currentSkyboxIndex);
 }
 
@@ -1211,6 +1259,9 @@ int main(int argc, char* argv[])
     const std::vector<SkyboxAssetEntry> skyboxAssets = DiscoverSkyboxAssets(cubemapRootPath);
     const std::vector<std::string> skyboxNames = BuildSkyboxNames(skyboxAssets);
     int currentSkyboxIndex = InitializeSkyboxSelection(scene, skyboxAssets, cubemapRootPath);
+    if (currentScenePreset == ScenePreset::Scene1MaryFloorPoint) {
+        scene.enableSkybox = false;
+    }
 
     SoftwareRenderer renderer(Window::kWindowWidth, Window::kWindowHeight);
     ConfigureRendererDefaults(renderer);
@@ -1245,7 +1296,7 @@ int main(int argc, char* argv[])
 
         ProcessPendingSceneSwitch(scene,debugUI,sceneResources,skyboxAssets,currentScenePreset,currentSkyboxIndex,inputState);
 
-        ProcessPendingSkyboxSwitch(scene, debugUI, skyboxAssets, currentSkyboxIndex);
+        ProcessPendingSkyboxSwitch(scene, debugUI, skyboxAssets, currentSkyboxIndex, currentScenePreset);
 
         UpdateSceneForFrame(scene, debugUI, inputState, deltaTime);
 

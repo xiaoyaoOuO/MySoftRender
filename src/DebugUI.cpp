@@ -1,6 +1,7 @@
 #include "DebugUI.h"
 
 #include "Scene.h"
+#include "Texture.h"
 #include "software_renderer.h"
 
 #include "imgui.h"
@@ -130,6 +131,11 @@ void DebugUI::drawShadowPanel(Scene& scene, SoftwareRenderer& renderer)
         drawSceneSection(scene);
 
         if (ImGui::BeginTabBar("DebugTabs")) {
+            if (ImGui::BeginTabItem("Skybox")) {
+                drawSkyboxTab(scene);
+                ImGui::EndTabItem();
+            }
+
             if (ImGui::BeginTabItem("Shadow")) {
                 drawShadowTab(scene);
                 ImGui::EndTabItem();
@@ -166,8 +172,8 @@ void DebugUI::drawSceneSection(Scene& scene)
     ImGui::SeparatorText("Scene");
 
     const char* scenePresetItems[] = {
-        "Scene 1: Mary + Floor + Point Light",
-        "Scene 2: Dual Spheres + Floor + Point Light"
+        "Scene 1: Mary + Floor + Point Light (Skybox Off)",
+        "Scene 2: Sphere (No Texture/No Light) + Skybox"
     };
 
     int scenePresetIndex = ClampScenePresetIndex(currentScenePreset_);
@@ -179,6 +185,18 @@ void DebugUI::drawSceneSection(Scene& scene)
             pendingScenePreset_ = scenePresetIndex;
         }
     }
+
+    ImGui::Text("Objects: %d", static_cast<int>(scene.objects.size()));
+    ImGui::SameLine();
+    ImGui::Text("Lights: %d", static_cast<int>(scene.lights.size()));
+    if (pendingScenePreset_ >= 0) {
+        ImGui::TextUnformatted("Scene switch queued. It will apply this frame.");
+    }
+}
+
+void DebugUI::drawSkyboxTab(Scene& scene)
+{
+    ImGui::Checkbox("Enable Skybox Background", &scene.enableSkybox);
 
     if (!skyboxOptions_.empty()) {
         int skyboxIndex = ClampSkyboxIndex(currentSkyboxIndex_, static_cast<int>(skyboxOptions_.size()));
@@ -199,14 +217,26 @@ void DebugUI::drawSceneSection(Scene& scene)
                 pendingSkyboxIndex_ = skyboxIndex;
             }
         }
+    } else {
+        ImGui::TextUnformatted("No skybox options found.");
     }
 
-    ImGui::Text("Objects: %d", static_cast<int>(scene.objects.size()));
-    ImGui::SameLine();
-    ImGui::Text("Lights: %d", static_cast<int>(scene.lights.size()));
-    if (pendingScenePreset_ >= 0) {
-        ImGui::TextUnformatted("Scene switch queued. It will apply this frame.");
+    ImGui::SeparatorText("IBL");
+    ImGui::Checkbox("Enable IBL", &scene.iblSettings.enableIBL);
+    ImGui::Checkbox("Diffuse IBL", &scene.iblSettings.enableDiffuseIBL);
+    ImGui::DragFloat("Diffuse IBL Intensity", &scene.iblSettings.diffuseIntensity, 0.01f, 0.0f, 8.0f, "%.3f");
+
+    // 展示当前环境贴图来源，便于确认 Diffuse IBL 采样链路是否生效。
+    const char* skyboxLabel = scene.skyboxName.empty() ? "None" : scene.skyboxName.c_str();
+    ImGui::Text("Skybox: %s", skyboxLabel);
+    const bool hasIblEnvMap = (scene.iblIrradianceMap && scene.iblIrradianceMap->valid())
+        || (scene.skyboxTexture && scene.skyboxTexture->valid());
+    if (!hasIblEnvMap) {
+        ImGui::TextUnformatted("No valid env map. Diffuse IBL falls back to constant ambient.");
     }
+
+    // 对 IBL 参数做下限保护，避免 UI 误操作导致负能量光照。
+    scene.iblSettings.diffuseIntensity = std::max(scene.iblSettings.diffuseIntensity, 0.0f);
     if (pendingSkyboxIndex_ >= 0) {
         ImGui::TextUnformatted("Skybox switch queued. It will apply this frame.");
     }
@@ -251,6 +281,14 @@ void DebugUI::drawShadowTab(Scene& scene)
 
 void DebugUI::drawLightTab(Scene& scene)
 {
+    ImGui::SeparatorText("Ambient");
+    ImGui::ColorEdit3("Ambient Color", &scene.ambientLightColor.x);
+    ImGui::DragFloat("Ambient Intensity", &scene.ambientLightIntensity, 0.01f, 0.0f, 5.0f, "%.3f");
+
+    // 对环境光参数做下限保护，避免 UI 误操作导致负能量光照。
+    scene.ambientLightIntensity = std::max(scene.ambientLightIntensity, 0.0f);
+
+    ImGui::SeparatorText("Direct Light");
     if (scene.lights.empty() || !scene.lights[0]) {
         ImGui::TextUnformatted("No light in scene.");
         return;
