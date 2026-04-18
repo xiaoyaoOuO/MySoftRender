@@ -112,7 +112,20 @@ add_executable(mySoftRender
     src/software_renderer.cpp
 )
 
+add_executable(skyboxLutBaker
+    utility/SkyboxLutBakerMain.cpp
+    utility/SkyboxLutGenerator.cpp
+    src/Texture.cpp
+)
+
+add_executable(skyboxSpecularLodBaker
+    utility/SkyboxSpecularLodBakerMain.cpp
+    src/Texture.cpp
+)
+
 target_include_directories(mySoftRender PRIVATE include)
+target_include_directories(skyboxLutBaker PRIVATE include utility)
+target_include_directories(skyboxSpecularLodBaker PRIVATE include utility)
 
 target_link_libraries(mySoftRender PRIVATE
     SDL2::SDL2
@@ -122,9 +135,29 @@ target_link_libraries(mySoftRender PRIVATE
     imgui_sdl
 )
 
+target_link_libraries(skyboxLutBaker PRIVATE
+    glm::glm
+    stb_image_wrapper
+)
+
+target_link_libraries(skyboxSpecularLodBaker PRIVATE
+    glm::glm
+    stb_image_wrapper
+)
+
 # 添加专门针对软渲染的激进性能优化编译参数
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(mySoftRender PRIVATE
+        $<$<CONFIG:Release>:-O3>
+        $<$<CONFIG:Release>:-march=native>
+        $<$<CONFIG:Release>:-ffast-math>
+    )
+    target_compile_options(skyboxLutBaker PRIVATE
+        $<$<CONFIG:Release>:-O3>
+        $<$<CONFIG:Release>:-march=native>
+        $<$<CONFIG:Release>:-ffast-math>
+    )
+    target_compile_options(skyboxSpecularLodBaker PRIVATE
         $<$<CONFIG:Release>:-O3>
         $<$<CONFIG:Release>:-march=native>
         $<$<CONFIG:Release>:-ffast-math>

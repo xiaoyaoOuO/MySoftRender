@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <array>
 
 namespace Window{
     constexpr int kWindowWidth = 960;
@@ -91,7 +92,199 @@ struct SkyboxAssetEntry
     std::string name;
     std::string directoryPath;
     std::shared_ptr<CubemapTexture> texture;
+    std::shared_ptr<CubemapTexture> irradianceTexture;
+    std::array<std::shared_ptr<CubemapTexture>, 6> specularLodTextures;
+    std::array<int, 6> specularLodFallbackSources = {{-1, -1, -1, -1, -1, -1}};
+    std::string specularLodRootPath;
+    std::shared_ptr<CubemapTexture> prefilterTexture;
+    std::shared_ptr<Texture2D> brdfLutTexture;
 };
+
+/**
+ * @brief Specular 六级 LOD 贴图加载结果。
+ */
+struct SpecularLodLoadResult
+{
+    std::array<std::shared_ptr<CubemapTexture>, 6> textures;
+    std::array<int, 6> fallbackSources = {{-1, -1, -1, -1, -1, -1}};
+    std::string rootPath;
+};
+
+/**
+ * @brief 尝试从目录加载可选立方体贴图资源，失败时返回空指针。
+ */
+std::shared_ptr<CubemapTexture> LoadOptionalCubemap(const std::filesystem::path& directoryPath)
+{
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    if (!fs::exists(directoryPath, ec) || ec || !fs::is_directory(directoryPath, ec) || ec) {
+        return nullptr;
+    }
+
+    auto cubemap = std::make_shared<CubemapTexture>();
+    if (!cubemap->loadFromDirectory(directoryPath.string())) {
+        return nullptr;
+    }
+    return cubemap;
+}
+
+/**
+ * @brief 从已加载的 Specular LOD 列表中，为目标档位查找最近可用档。
+ * @return 返回最近可用源档位；若全部缺失返回 -1。
+ */
+int FindNearestSpecularLodSource(
+    const std::array<std::shared_ptr<CubemapTexture>, 6>& directLoaded,
+    int requestedLod)
+{
+    int bestSource = -1;
+    int bestDistance = 1000;
+
+    for (int sourceLod = 0; sourceLod < static_cast<int>(directLoaded.size()); ++sourceLod) {
+        if (!directLoaded[static_cast<std::size_t>(sourceLod)]
+            || !directLoaded[static_cast<std::size_t>(sourceLod)]->valid()) {
+            continue;
+        }
+
+        const int distance = std::abs(sourceLod - requestedLod);
+        if (distance < bestDistance || (distance == bestDistance && sourceLod < bestSource)) {
+            bestDistance = distance;
+            bestSource = sourceLod;
+        }
+    }
+
+    return bestSource;
+}
+
+/**
+ * @brief 加载单个天空盒的 Specular 六级 LOD 贴图，并为缺档建立最近回退映射。
+ */
+SpecularLodLoadResult LoadSpecularLodCubemaps(const std::filesystem::path& skyboxPath)
+{
+    namespace fs = std::filesystem;
+
+    SpecularLodLoadResult result;
+
+    const std::string skyboxName = skyboxPath.filename().string();
+    const fs::path iblRootPath = skyboxPath / "ibl";
+    const fs::path covRootPath = skyboxPath / (skyboxName + "_cov");
+    const fs::path specLodRootPath = iblRootPath / "specular_lod";
+    const fs::path prefilterLodRootPath = iblRootPath / "prefilter_lod";
+
+    // 当前约定：_cov 卷积资源用于 Specular 高光采样，缺失时再回退到其它 specular 目录。
+    const std::array<fs::path, 3> candidateRoots = {
+        covRootPath,
+        specLodRootPath,
+        prefilterLodRootPath
+    };
+
+    std::array<std::shared_ptr<CubemapTexture>, 6> directLoaded;
+    std::array<bool, 3> usedRoots = {{false, false, false}};
+
+    for (int lod = 0; lod < static_cast<int>(directLoaded.size()); ++lod) {
+        const fs::path lodPathName = "lod" + std::to_string(lod);
+
+        for (int rootIndex = 0; rootIndex < static_cast<int>(candidateRoots.size()); ++rootIndex) {
+            auto lodMap = LoadOptionalCubemap(candidateRoots[static_cast<std::size_t>(rootIndex)] / lodPathName);
+            if (!lodMap) {
+                continue;
+            }
+
+            directLoaded[static_cast<std::size_t>(lod)] = std::move(lodMap);
+            usedRoots[static_cast<std::size_t>(rootIndex)] = true;
+            break;
+        }
+    }
+
+    std::vector<std::string> usedRootPaths;
+    for (int rootIndex = 0; rootIndex < static_cast<int>(candidateRoots.size()); ++rootIndex) {
+        if (usedRoots[static_cast<std::size_t>(rootIndex)]) {
+            usedRootPaths.emplace_back(candidateRoots[static_cast<std::size_t>(rootIndex)].string());
+        }
+    }
+
+    if (!usedRootPaths.empty()) {
+        result.rootPath = usedRootPaths[0];
+        if (usedRootPaths.size() > 1) {
+            result.rootPath += " (mixed with ";
+            for (std::size_t i = 1; i < usedRootPaths.size(); ++i) {
+                if (i > 1) {
+                    result.rootPath += ", ";
+                }
+                result.rootPath += usedRootPaths[i];
+            }
+            result.rootPath += ")";
+        }
+    }
+
+    for (int lod = 0; lod < static_cast<int>(result.textures.size()); ++lod) {
+        int sourceLod = -1;
+        if (directLoaded[static_cast<std::size_t>(lod)]
+            && directLoaded[static_cast<std::size_t>(lod)]->valid()) {
+            sourceLod = lod;
+        } else {
+            sourceLod = FindNearestSpecularLodSource(directLoaded, lod);
+        }
+
+        result.fallbackSources[static_cast<std::size_t>(lod)] = sourceLod;
+        if (sourceLod >= 0) {
+            result.textures[static_cast<std::size_t>(lod)] = directLoaded[static_cast<std::size_t>(sourceLod)];
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief 尝试加载 BRDF LUT 纹理，按常见命名依次回退。
+ */
+std::shared_ptr<Texture2D> LoadOptionalBrdfLut(const std::filesystem::path& iblRootPath)
+{
+    namespace fs = std::filesystem;
+
+    const std::string skyboxName = iblRootPath.parent_path().filename().string();
+    std::vector<std::string> candidateNames;
+    candidateNames.reserve(12);
+
+    auto appendCandidateName = [&candidateNames](const std::string& name) {
+        if (name.empty()) {
+            return;
+        }
+        if (std::find(candidateNames.begin(), candidateNames.end(), name) == candidateNames.end()) {
+            candidateNames.push_back(name);
+        }
+    };
+
+    // 优先匹配“每个 cubemap 自己的 LUT 命名”，再回退到通用命名。
+    appendCandidateName(skyboxName + "_lut.png");
+    appendCandidateName(skyboxName + "_lut.ppm");
+    appendCandidateName(skyboxName + "_brdf_lut.png");
+    appendCandidateName(skyboxName + "_brdf_lut.ppm");
+
+    appendCandidateName("skybox_lut.png");
+    appendCandidateName("skybox_lut.ppm");
+    appendCandidateName("brdf_lut.png");
+    appendCandidateName("brdf_lut.ppm");
+    appendCandidateName("brdf_lut.jpg");
+    appendCandidateName("brdf_lut.jpeg");
+    appendCandidateName("brdfLUT.png");
+    appendCandidateName("brdf.png");
+
+    for (const std::string& fileName : candidateNames) {
+        const fs::path filePath = iblRootPath / fileName;
+        std::error_code ec;
+        if (!fs::exists(filePath, ec) || ec || !fs::is_regular_file(filePath, ec) || ec) {
+            continue;
+        }
+
+        auto texture = std::make_shared<Texture2D>();
+        if (texture->loadFromFile(filePath.string(), false)) {
+            return texture;
+        }
+    }
+
+    return nullptr;
+}
 
 /**
  * @brief 扫描天空盒根目录并加载所有可用的立方体贴图。
@@ -127,6 +320,14 @@ std::vector<SkyboxAssetEntry> DiscoverSkyboxAssets(const std::string& cubemapRoo
         asset.name = entry.path().filename().string();
         asset.directoryPath = entry.path().string();
         asset.texture = std::move(cubemapTexture);
+        const fs::path iblRootPath = entry.path() / "ibl";
+        asset.irradianceTexture = LoadOptionalCubemap(iblRootPath / "irradiance");
+        const SpecularLodLoadResult specularLodResult = LoadSpecularLodCubemaps(entry.path());
+        asset.specularLodTextures = specularLodResult.textures;
+        asset.specularLodFallbackSources = specularLodResult.fallbackSources;
+        asset.specularLodRootPath = specularLodResult.rootPath;
+        asset.prefilterTexture = LoadOptionalCubemap(iblRootPath / "prefilter");
+        asset.brdfLutTexture = LoadOptionalBrdfLut(iblRootPath);
         assets.emplace_back(std::move(asset));
     }
 
@@ -167,8 +368,15 @@ bool ApplySkyboxByIndex(Scene& scene, const std::vector<SkyboxAssetEntry>& asset
         return false;
     }
 
-    scene.skyboxTexture = assets[static_cast<std::size_t>(skyboxIndex)].texture;
-    scene.skyboxName = assets[static_cast<std::size_t>(skyboxIndex)].name;
+    const SkyboxAssetEntry& selectedAsset = assets[static_cast<std::size_t>(skyboxIndex)];
+    scene.skyboxTexture = selectedAsset.texture;
+    scene.skyboxName = selectedAsset.name;
+    scene.iblIrradianceMap = selectedAsset.irradianceTexture;
+    scene.IBLSpecLodMaps = selectedAsset.specularLodTextures;
+    scene.IBLSpecLodFallbackSources = selectedAsset.specularLodFallbackSources;
+    scene.iblSpecLodRootPath = selectedAsset.specularLodRootPath;
+    scene.iblPrefilterMap = selectedAsset.prefilterTexture;
+    scene.iblBrdfLut = selectedAsset.brdfLutTexture;
     scene.enableSkybox = static_cast<bool>(scene.skyboxTexture);
     return scene.enableSkybox;
 }
@@ -385,7 +593,11 @@ void ResetSceneState(
     scene.ambientLightIntensity = 0.08f;
     scene.iblSettings.enableIBL = true;
     scene.iblSettings.enableDiffuseIBL = true;
-    scene.iblSettings.diffuseIntensity = 0.25f;
+    scene.iblSettings.enableSpecularIBL = false;
+    scene.iblSettings.diffuseIntensity = 1.0f;
+    scene.iblSettings.specularIntensity = 1.0f;
+    scene.iblSettings.specularLodMode = SpecularLodMode::Auto;
+    scene.iblSettings.specularManualLod = 2;
 
     Scene::instance = &scene;
 }
@@ -448,6 +660,9 @@ void BuildScenePresetOne(Scene& scene, const SceneBuildResources& resources)
 {
     ResetSceneState(scene, glm::vec3(0.0f, 0.7f, 3.4f), glm::vec3(0.0f, -0.4f, -2.0f));
     scene.enableSkybox = false;
+    scene.iblSettings.enableIBL = false;
+    scene.iblSettings.enableDiffuseIBL = false;
+    scene.iblSettings.enableSpecularIBL = false;
 
     ObjMeshData maryMesh;
     const bool maryLoadOk = ObjLoader::LoadFromFile(resources.maryObjPath, maryMesh);
@@ -481,9 +696,19 @@ void BuildScenePresetTwo(Scene& scene, const SceneBuildResources& resources)
 {
     (void)resources;
     ResetSceneState(scene, glm::vec3(0.0f, 0.65f, 3.2f), glm::vec3(0.0f, -0.15f, -2.0f));
+    scene.iblSettings.enableIBL = true;
+    scene.iblSettings.enableDiffuseIBL = true;
+    scene.iblSettings.enableSpecularIBL = true;
+
+    // 直接用 shared_ptr 创建材质，避免手动 new 造成泄漏风险。
+    auto metalMaterial = std::make_shared<Material>();
+    metalMaterial->metallic = 1.0f;
+    metalMaterial->roughness = 0.2f;
+    metalMaterial->albedo = glm::vec3(0.9f, 0.9f, 0.9f);
 
     auto sphere = std::make_unique<Sphere>(0.65f, 2, glm::vec3(0.9f, 0.9f, 0.9f));
     sphere->setPosition(glm::vec3(0.0f, -0.35f, -2.0f));
+    sphere->setMaterial(metalMaterial);
     scene.objects.emplace_back(std::move(sphere));
 
     scene.enableSkybox = true;
@@ -518,6 +743,27 @@ glm::vec3 NormalizeColorToUnitRange(const glm::vec3& color)
 }
 
 /**
+ * @brief 安全归一化方向向量，零向量时返回指定回退方向。
+ */
+glm::vec3 NormalizeDirectionSafe(const glm::vec3& dir, const glm::vec3& fallbackDir)
+{
+    if (glm::dot(dir, dir) <= 1e-12f) {
+        return fallbackDir;
+    }
+    return glm::normalize(dir);
+}
+
+//避免拷贝，直接修改传入dir
+void NormalizeDirectionSafeInPlace(glm::vec3& dir, const glm::vec3& fallbackDir)
+{
+    if (glm::dot(dir, dir) <= 1e-12f) {
+        dir = fallbackDir;
+    } else {
+        dir = glm::normalize(dir);
+    }
+}
+
+/**
  * @brief 计算常量环境光（原有 ambientColor * ambientIntensity 逻辑）。
  * @return 返回常量环境光线性颜色。
  */
@@ -528,8 +774,36 @@ glm::vec3 ComputeConstantAmbientLighting(const Scene& scene)
 }
 
 /**
- * @brief 计算 Diffuse IBL 环境光，优先 irradiance 贴图，缺失时回退到天空盒。
- * @param worldNormal 片元世界法线。
+ * @brief 按 roughness 自动映射 Specular LOD（0~5）。
+ */
+float ComputeSpecularLodLevel(float roughness)
+{
+    const float safeRoughness = std::clamp(roughness, 0.0f, 1.0f);
+    return safeRoughness * 5.0f;
+}
+
+/**
+ * @brief 按 roughness 自动映射 Specular LOD 档位索引（0~5）。
+ */
+int ComputeSpecularLod(float roughness)
+{
+    return std::clamp(static_cast<int>(std::round(ComputeSpecularLodLevel(roughness))), 0, 5);
+}
+
+/**
+ * @brief 根据场景配置选择本次 Specular IBL 的目标 LOD 档位。
+ */
+int SelectSpecularLod(const Scene& scene, float roughness)
+{
+    if (scene.iblSettings.specularLodMode == SpecularLodMode::Manual) {
+        return std::clamp(scene.iblSettings.specularManualLod, 0, 5);
+    }
+    return ComputeSpecularLod(roughness);
+}
+
+/**
+ * @brief 计算 Diffuse IBL 环境光分量。（Spherical Harmonics后续）
+ * @param worldNormal 片元世界法线（默认按法线方向采样环境图）。
  */
 glm::vec3 ComputeDiffuseIblLighting(const Scene& scene, const glm::vec3& worldNormal)
 {
@@ -538,7 +812,8 @@ glm::vec3 ComputeDiffuseIblLighting(const Scene& scene, const glm::vec3& worldNo
     }
 
     const CubemapTexture* iblSource = nullptr;
-    if (scene.iblIrradianceMap && scene.iblIrradianceMap->valid()) {
+    const bool hasIrradianceMap = scene.iblIrradianceMap && scene.iblIrradianceMap->valid();
+    if (hasIrradianceMap) {
         iblSource = scene.iblIrradianceMap.get();
     } else if (scene.skyboxTexture && scene.skyboxTexture->valid()) {
         iblSource = scene.skyboxTexture.get();
@@ -547,24 +822,161 @@ glm::vec3 ComputeDiffuseIblLighting(const Scene& scene, const glm::vec3& worldNo
         return glm::vec3(0.0f);
     }
 
-    glm::vec3 safeNormal = worldNormal;
-    if (glm::dot(safeNormal, safeNormal) <= 1e-12f) {
-        safeNormal = glm::vec3(0.0f, 1.0f, 0.0f);
-    } else {
-        safeNormal = glm::normalize(safeNormal);
-    }
-
+    const glm::vec3 safeNormal = NormalizeDirectionSafe(worldNormal, glm::vec3(0.0f, 1.0f, 0.0f));
     const glm::vec3 diffuseIblColor = iblSource->sample(safeNormal);
     return std::max(scene.iblSettings.diffuseIntensity, 0.0f) * diffuseIblColor;
 }
 
 /**
- * @brief 计算最终环境光分量：常量环境光 + Diffuse IBL。
- * @param worldNormal 片元世界法线。
+ * @brief Schlick 近似（粗糙度修正版本），用于计算 IBL 镜面菲涅耳。
  */
-glm::vec3 ComputeAmbientLighting(const Scene& scene, const glm::vec3& worldNormal)
+glm::vec3 FresnelSchlickRoughness(float cosTheta, const glm::vec3& F0, float roughness)
 {
-    return ComputeConstantAmbientLighting(scene) + ComputeDiffuseIblLighting(scene, worldNormal);
+    const float safeCosTheta = std::clamp(cosTheta, 0.0f, 1.0f);
+    const float oneMinusCos = 1.0f - safeCosTheta;
+    const float fresnelFactor = oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos;
+    const float oneMinusRoughness = std::max(1.0f - roughness, 0.0f);
+
+    const glm::vec3 maxF(
+        std::max(oneMinusRoughness, F0.r),
+        std::max(oneMinusRoughness, F0.g),
+        std::max(oneMinusRoughness, F0.b));
+
+    return F0 + (maxF - F0) * fresnelFactor;
+}
+
+/**
+ * @brief BRDF LUT 采样结果（x=scale, y=bias）。
+ */
+struct BrdfSample
+{
+    float scale = 1.0f;
+    float bias = 0.0f;
+};
+
+/**
+ * @brief 采样 BRDF LUT；当 LUT 缺失时使用简化近似，保证 Specular IBL 可回退。
+ */
+BrdfSample SampleBrdfLut(const Scene& scene, float ndotv, float roughness)
+{
+    const float safeNdotV = std::clamp(ndotv, 0.0f, 1.0f);
+    const float safeRoughness = std::clamp(roughness, 0.0f, 1.0f);
+
+    if (scene.iblBrdfLut && scene.iblBrdfLut->valid()) {
+        // BRDF LUT 约定为 x=roughness, y=NdotV，采样顺序必须与离线生成保持一致。
+        const glm::vec3 lutSample = scene.iblBrdfLut->sample(safeRoughness, safeNdotV);
+        BrdfSample result;
+        result.scale = std::clamp(lutSample.r, 0.0f, 1.0f);
+        result.bias = std::clamp(lutSample.g, 0.0f, 1.0f);
+        return result;
+    }
+
+    // LUT 缺失时用轻量近似，避免直接硬回退到 0 导致镜面 IBL 完全消失。
+    const float oneMinusNdotV = 1.0f - safeNdotV;
+    const float fresnelPow5 = oneMinusNdotV * oneMinusNdotV * oneMinusNdotV * oneMinusNdotV * oneMinusNdotV;
+
+    BrdfSample fallback;
+    fallback.scale = std::clamp(1.0f - 0.55f * safeRoughness, 0.0f, 1.0f);
+    fallback.bias = std::clamp(0.02f + 0.50f * safeRoughness * fresnelPow5, 0.0f, 1.0f);
+    return fallback;
+}
+
+/**
+ * @brief 计算 Specular IBL 分量（Split-Sum：Prefilter * BRDF LUT）。
+ */
+glm::vec3 ComputeSpecularIblLighting(
+    const Scene& scene,
+    const glm::vec3& worldNormal,
+    const glm::vec3& viewDir,
+    const glm::vec3& albedo,
+    const float roughness,
+    const float metallic)
+{
+    if (!scene.iblSettings.enableIBL || !scene.iblSettings.enableSpecularIBL) {
+        return glm::vec3(0.0f);
+    }
+
+    const float safeIntensity = std::max(scene.iblSettings.specularIntensity, 0.0f);
+    if (safeIntensity <= 0.0f) {
+        return glm::vec3(0.0f);
+    }
+
+    const glm::vec3 safeNormal = NormalizeDirectionSafe(worldNormal, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 safeViewDir = NormalizeDirectionSafe(viewDir, glm::vec3(0.0f, 0.0f, 1.0f));
+    const float safeRoughness = std::clamp(roughness, 0.0f, 1.0f);
+    const float safeMetallic = std::clamp(metallic, 0.0f, 1.0f);
+
+    const int requestedLod = SelectSpecularLod(scene, safeRoughness);
+    const float lod = (scene.iblSettings.specularLodMode == SpecularLodMode::Manual)
+        ? static_cast<float>(requestedLod)
+        : ComputeSpecularLodLevel(safeRoughness);
+
+    const float ndotv = std::clamp(glm::dot(safeNormal, safeViewDir), 0.0f, 1.0f);
+
+    const glm::vec3 reflectDir = NormalizeDirectionSafe(
+        glm::reflect(-safeViewDir, safeNormal),
+        glm::vec3(0.0f, 0.0f, 1.0f));
+
+    glm::vec3 prefilteredColor(0.0f);
+
+    const auto& specularLodMap = scene.IBLSpecLodMaps[requestedLod];
+    if (specularLodMap && specularLodMap->valid()) {
+        prefilteredColor = specularLodMap->sample(reflectDir);
+    } else if (scene.iblPrefilterMap && scene.iblPrefilterMap->valid()) {
+        prefilteredColor = scene.iblPrefilterMap->sampleLod(reflectDir, lod);
+    } else if (scene.skyboxTexture && scene.skyboxTexture->valid()) {
+        prefilteredColor = scene.skyboxTexture->sampleLod(reflectDir, lod);
+    } else {
+        return glm::vec3(0.0f);
+    }
+
+    //splitsum的BRDF LUT采样，得到 scale 和 bias
+    const BrdfSample brdf = SampleBrdfLut(scene, ndotv, safeRoughness);
+    const glm::vec3 F0 = glm::vec3(0.04f) * (1.0f - safeMetallic) + albedo * safeMetallic;
+    const glm::vec3 fresnel = FresnelSchlickRoughness(ndotv, F0, safeRoughness);
+
+    const glm::vec3 specularIbl = prefilteredColor * (fresnel * brdf.scale + glm::vec3(brdf.bias));
+    return safeIntensity * specularIbl;
+}
+
+/**
+ * @brief 汇总 IBL 环境光（Diffuse + Specular）。
+ * @param albedo 反照率颜色，分别参与 Diffuse IBL 与 Specular IBL 的能量计算。
+ */
+glm::vec3 ComputeIblLighting(
+    const Scene& scene,
+    const glm::vec3& worldNormal,
+    const glm::vec3& viewDir,
+    const glm::vec3& albedo,
+    std::weak_ptr<Material> material = std::weak_ptr<Material>())
+{
+    if (!scene.iblSettings.enableIBL) {
+        return glm::vec3(0.0f);
+    }
+
+    const glm::vec3 safeNormal = NormalizeDirectionSafe(worldNormal, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 safeViewDir = NormalizeDirectionSafe(viewDir, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    float roughness = 0.5f;
+    float metallic = 0.0f;
+    if (const auto& mat = material.lock()) {
+        roughness = std::clamp(mat->roughness, 0.0f, 1.0f);
+        metallic = std::clamp(mat->metallic, 0.0f, 1.0f);
+    }
+
+    const glm::vec3 diffuseIbl = ComputeDiffuseIblLighting(scene, safeNormal);
+    if (!scene.iblSettings.enableSpecularIBL) {
+        return albedo * diffuseIbl;
+    }
+
+    const float ndotv = std::clamp(glm::dot(safeNormal, safeViewDir), 0.0f, 1.0f);
+
+    const glm::vec3 F0 = glm::vec3(0.04f) * (1.0f - metallic) + albedo * metallic;
+    const glm::vec3 kS = FresnelSchlickRoughness(ndotv, F0, roughness);
+    const glm::vec3 kD = (glm::vec3(1.0f) - kS) * (1.0f - metallic);
+
+    const glm::vec3 specularIbl = ComputeSpecularIblLighting(scene, safeNormal, safeViewDir, albedo, roughness, metallic);
+    return albedo * (kD * diffuseIbl) + specularIbl;
 }
 
 /**
@@ -595,7 +1007,8 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
         viewDir = glm::normalize(viewDir);
     }
 
-    glm::vec3 ambientLighting = ComputeAmbientLighting(scene, normal);
+    const glm::vec3 constantAmbientLighting = ComputeConstantAmbientLighting(scene);
+    // const glm::vec3 iblLighting = ComputeIblLighting(scene, normal, viewDir, albedo, payload.material);
     glm::vec3 directDiffuseLighting(0.0f);
     glm::vec3 specularLighting(0.0f);
     glm::vec3 emissiveLighting(0.0f);
@@ -650,7 +1063,87 @@ void BlingPhongShader(std::vector<std::uint32_t>& colorbuffer, const Fragment& p
 
     // 阴影只衰减直射项，环境光与自发光不应被阴影完全压黑。
     const float shadowVisibility = std::clamp(payload.shadowVisibility, 0.0f, 1.0f);
-    glm::vec3 finalLinear = albedo * ambientLighting;
+    glm::vec3 finalLinear = albedo * constantAmbientLighting;
+    finalLinear += shadowVisibility * (albedo * directDiffuseLighting + specularLighting);
+    finalLinear += emissiveLighting;
+    finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
+
+    Color finalColor;
+    finalColor.r = static_cast<std::uint8_t>(finalLinear.r * 255.0f);
+    finalColor.g = static_cast<std::uint8_t>(finalLinear.g * 255.0f);
+    finalColor.b = static_cast<std::uint8_t>(finalLinear.b * 255.0f);
+    finalColor.a = 255;
+    colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(finalColor);
+}
+
+void CookTorrance_Shader(std::vector<std::uint32_t>& colorbuffer, const Fragment& payload, const Scene& scene)
+{
+    if (!scene.camera) {
+        colorbuffer[payload.bufferIndex] = SoftwareRenderer::packColor(payload.color);
+        return;
+    }
+
+    glm::vec3 albedo = glm::vec3(payload.color.r, payload.color.g, payload.color.b) / 255.0f;
+
+    glm::vec3 normal = NormalizeDirectionSafe(payload.normal, glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::vec3 viewDir = NormalizeDirectionSafe(scene.camera->position() - payload.worldPos, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    const glm::vec3 constantAmbientLighting = ComputeConstantAmbientLighting(scene);
+    const glm::vec3 iblColor = ComputeIblLighting(scene, normal, viewDir, albedo, payload.material);
+
+    glm::vec3 directDiffuseLighting(0.0f);
+    glm::vec3 specularLighting(0.0f);
+    glm::vec3 emissiveLighting(0.0f);
+
+    constexpr float kShininess = 64.0f;
+    constexpr float kSpecularStrength = 0.35f;
+
+    for (const auto& lightPtr : scene.lights) {
+        if (!lightPtr) {
+            continue;
+        }
+
+        const Light& light = *lightPtr;
+        const glm::vec3 lightColor = NormalizeColorToUnitRange(light.color());
+
+        glm::vec3 lightDir(0.0f, 1.0f, 0.0f);
+        float attenuation = 1.0f;
+
+        if (light.type() == Light::LightType::Directional) {
+            glm::vec3 dir = light.direction();
+            if (glm::dot(dir, dir) > 1e-12f) {
+                lightDir = -glm::normalize(dir);
+            }
+        } else {
+            const glm::vec3 toLight = light.position() - payload.worldPos;
+            const float distanceToLight = std::max(glm::length(toLight), 1e-4f);
+            lightDir = toLight / distanceToLight;
+            attenuation = 1.0f / (1.0f + 0.14f * distanceToLight + 0.07f * distanceToLight * distanceToLight);
+
+            constexpr float kLightCoreRadius = 0.14f;
+            if (distanceToLight < kLightCoreRadius) {
+                const float coreFactor = 1.0f - distanceToLight / kLightCoreRadius;
+                emissiveLighting += lightColor * light.intensity() * coreFactor * 0.65f;
+            }
+        }
+
+        const float ndotl = std::max(glm::dot(normal, lightDir), 0.0f);
+        if (ndotl <= 0.0f) {
+            continue;
+        }
+
+        const glm::vec3 halfDir = glm::normalize(lightDir + viewDir);
+        const float specAngle = std::max(glm::dot(normal, halfDir), 0.0f);
+        const float specularTerm = std::pow(specAngle, kShininess);
+
+        directDiffuseLighting += ndotl * light.intensity() * attenuation * lightColor;
+        specularLighting += kSpecularStrength * specularTerm * light.intensity() * attenuation * lightColor;
+    }
+
+    // 直接光照继续受阴影控制，IBL 与常量环境光不受阴影压制。
+    const float shadowVisibility = std::clamp(payload.shadowVisibility, 0.0f, 1.0f);
+    glm::vec3 finalLinear = albedo * constantAmbientLighting;
+    finalLinear += iblColor;
     finalLinear += shadowVisibility * (albedo * directDiffuseLighting + specularLighting);
     finalLinear += emissiveLighting;
     finalLinear = glm::clamp(finalLinear, glm::vec3(0.0f), glm::vec3(1.0f));
@@ -757,6 +1250,12 @@ int InitializeSkyboxSelection(
     }
 
     scene.skyboxTexture.reset();
+    scene.iblIrradianceMap.reset();
+    scene.IBLSpecLodMaps = {};
+    scene.IBLSpecLodFallbackSources = {{-1, -1, -1, -1, -1, -1}};
+    scene.iblSpecLodRootPath.clear();
+    scene.iblPrefilterMap.reset();
+    scene.iblBrdfLut.reset();
     scene.skyboxName = "None";
     scene.enableSkybox = false;
     std::cout << "Skybox: no valid cubemap found under: " << cubemapRootPath << '\n';
@@ -768,11 +1267,12 @@ void ConfigureRendererDefaults(SoftwareRenderer& renderer)
 {
     renderer.setBackfaceCullingEnabled(true);
     renderer.setMsaaSampleCount(1);
-    renderer.SetFragmentShader(BlingPhongShader);
+    renderer.SetFragmentShader(CookTorrance_Shader);
 
     std::cout << "Wireframe overlay: OFF (press F1 to toggle)" << '\n';
     std::cout << "Back-face culling: ON (press F2 to toggle)" << '\n';
     std::cout << "MSAA samples: " << renderer.msaaSampleCount() << "x (press F3 to cycle 1x/2x/4x)" << '\n';
+    std::cout << "Fragment shader: CookTorrance (IBL enabled path)" << '\n';
     std::cout << "Debug UI: ON (press F4 to toggle panel)" << '\n';
     std::cout << "Mouse capture: ON (press F5 to toggle for ImGui interaction)" << '\n';
 }

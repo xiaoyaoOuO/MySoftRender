@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include "Material.h"
 
 class Texture2D;
 
@@ -50,6 +51,10 @@ public:
     void translate(const glm::vec3& delta) { position += delta; modelMatrixDirty = true; }
     void rotate(const glm::vec3& deltaEulerDeg) { rotation += deltaEulerDeg; modelMatrixDirty = true; }
 
+    //设置Object的材质
+    void setMaterial(const std::shared_ptr<Material>& material) { material_ = material; }
+    const std::shared_ptr<Material>& material() const { return material_; }
+
     glm::mat4 modelMatrix() const
     {
         if(!modelMatrixDirty){
@@ -72,6 +77,7 @@ protected:
     glm::vec3 scale;    // 物体的缩放
     std::shared_ptr<Texture2D> texture_; // 对象绑定的纹理资源（可为空）
     bool castShadow_ = true; // 对象是否参与阴影投射
+    std::shared_ptr<Material> material_; // 对象的材质属性（可为空）
 
     //缓存model矩阵以及dirty标志位，避免每帧重复计算
     mutable glm::mat4 cachedModelMatrix;

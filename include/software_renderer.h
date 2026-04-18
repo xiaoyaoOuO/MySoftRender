@@ -76,7 +76,7 @@ public:
      */
     const FragmentThreadingStats& fragmentThreadingStats() const;
 
-    void rasterizeLocalTriangle(const glm::mat4& model,const glm::mat4& mvp,const std::array<Vertex, 3>& localVertices,const Texture2D* texture = nullptr);
+    void rasterizeLocalTriangle(const glm::mat4& model,const glm::mat4& mvp,const std::array<Vertex, 3>& localVertices,const Texture2D* texture = nullptr,std::weak_ptr<Material> material = std::weak_ptr<Material>());
     bool projectLocalTriangleToScreen(const glm::mat4& mvp,std::array<Vertex, 3>& vertices);
 
     static std::uint32_t packColor(const Color& color);

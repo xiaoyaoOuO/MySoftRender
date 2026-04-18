@@ -65,6 +65,14 @@ public:
      */
     glm::vec3 sample(const glm::vec3& direction) const;
 
+    /**
+     * @brief 按方向与 LOD 采样天空盒颜色，LOD 越大代表越模糊。
+     * @param direction 世界空间方向向量，建议传入单位向量。
+     * @param lod 近似 MIP 级别，建议范围 [0, 5]。
+     * @return 返回线性空间 RGB 颜色；若资源无效返回洋红色。
+     */
+    glm::vec3 sampleLod(const glm::vec3& direction, float lod) const;
+
     // 查询天空盒资源是否可采样。六个面全部加载成功且尺寸一致时返回 true。
     bool valid() const { return valid_; }
 

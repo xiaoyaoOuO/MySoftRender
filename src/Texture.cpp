@@ -9,6 +9,7 @@
 
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
+#include <glm/vec2.hpp>
 #include <stb_image.h>
 
 namespace {
@@ -293,4 +294,64 @@ glm::vec3 CubemapTexture::sample(const glm::vec3& direction) const
     const float u = std::clamp((localU + 1.0f) * 0.5f, 0.0f, 1.0f);
     const float v = std::clamp((localV + 1.0f) * 0.5f, 0.0f, 1.0f);
     return faces_[static_cast<std::size_t>(face)].sample(u, v);
+}
+
+// 按近似 LOD 进行立方体贴图采样。LOD 越大，围绕反射方向的采样锥越大，用于近似粗糙表面的模糊反射。
+glm::vec3 CubemapTexture::sampleLod(const glm::vec3& direction, float lod) const
+{
+    if (!valid_) {
+        return glm::vec3(1.0f, 0.0f, 1.0f);
+    }
+
+    glm::vec3 safeDirection = direction;
+    if (glm::dot(safeDirection, safeDirection) <= 1e-12f) {
+        safeDirection = glm::vec3(0.0f, 0.0f, 1.0f);
+    } else {
+        safeDirection = glm::normalize(safeDirection);
+    }
+
+    const float clampedLod = std::clamp(lod, 0.0f, 5.0f);
+    const float blurFactor = clampedLod / 5.0f;
+    if (blurFactor <= 1e-5f) {
+        return sample(safeDirection);
+    }
+
+    const glm::vec3 helperUp = (std::abs(safeDirection.y) < 0.999f)
+        ? glm::vec3(0.0f, 1.0f, 0.0f)
+        : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 tangent = glm::normalize(glm::cross(helperUp, safeDirection));
+    const glm::vec3 bitangent = glm::normalize(glm::cross(safeDirection, tangent));
+
+    // 采用固定盘形偏移，避免引入随机噪声；低粗糙度时采样点更集中，高粗糙度时采样锥扩大。
+    constexpr std::array<glm::vec2, 8> kDiskOffsets = {{
+        glm::vec2(1.0f, 0.0f),
+        glm::vec2(-1.0f, 0.0f),
+        glm::vec2(0.0f, 1.0f),
+        glm::vec2(0.0f, -1.0f),
+        glm::vec2(0.7071f, 0.7071f),
+        glm::vec2(-0.7071f, 0.7071f),
+        glm::vec2(0.7071f, -0.7071f),
+        glm::vec2(-0.7071f, -0.7071f)
+    }};
+
+    const int tapCount = 2 + static_cast<int>(std::round(blurFactor * 6.0f));
+    const float coneRadius = 0.02f + blurFactor * 0.35f;
+
+    glm::vec3 accumulatedColor = sample(safeDirection);
+    float accumulatedWeight = 1.0f;
+
+    for (int tapIndex = 0; tapIndex < tapCount; ++tapIndex) {
+        const glm::vec2 diskOffset = kDiskOffsets[static_cast<std::size_t>(tapIndex)] * coneRadius;
+        glm::vec3 sampleDirection = safeDirection + tangent * diskOffset.x + bitangent * diskOffset.y;
+        if (glm::dot(sampleDirection, sampleDirection) <= 1e-12f) {
+            continue;
+        }
+        sampleDirection = glm::normalize(sampleDirection);
+
+        const float weight = std::max(0.2f, 1.0f - 0.08f * static_cast<float>(tapIndex + 1));
+        accumulatedColor += sample(sampleDirection) * weight;
+        accumulatedWeight += weight;
+    }
+
+    return accumulatedColor / std::max(accumulatedWeight, 1e-4f);
 }

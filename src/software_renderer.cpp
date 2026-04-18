@@ -461,7 +461,16 @@ bool SoftwareRenderer::projectLocalTriangleToScreen(const glm::mat4& mvp,std::ar
     return true;
 };
 
-void SoftwareRenderer::rasterizeLocalTriangle(const glm::mat4& model,const glm::mat4& mvp,const std::array<Vertex, 3>& localVertices,const Texture2D* texture) {
+
+/**
+ * @brief 将一个三角形从局部空间投影到屏幕空间并执行光栅化。
+ * @param model 模型矩阵，用于将局部顶点变换到世界空间。
+ * @param mvp 模型-视图-投影矩阵，用于将局部顶点投影到屏幕空间。
+ * @param localVertices 三角形的三个局部空间顶点，包含位置、法线、纹理坐标等属性。
+ * @param texture 可选的纹理指针，如果提供则在光栅化阶段进行纹理采样。
+ * @param material 可选的材质弱指针，如果提供则在片段着色阶段使用材质属性进行光照计算。
+ */
+void SoftwareRenderer::rasterizeLocalTriangle(const glm::mat4& model,const glm::mat4& mvp,const std::array<Vertex, 3>& localVertices,const Texture2D* texture,std::weak_ptr<Material> material) {
     std::array<glm::vec3, 3> worldPositions;
     std::array<glm::vec3, 3> worldNormals;
 
@@ -492,7 +501,7 @@ void SoftwareRenderer::rasterizeLocalTriangle(const glm::mat4& model,const glm::
         return;
     }
 
-    rasterizer_.Rasterize_Triangle(screenVertices, texture, &worldPositions, &worldNormals);
+    rasterizer_.Rasterize_Triangle(screenVertices, texture, &worldPositions, &worldNormals, material);
 };
 
 
@@ -790,6 +799,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         const glm::mat4 model = obj->modelMatrix();
         const glm::mat4 mvp = viewProjection * model;
         const Texture2D* objectTexture = obj->hasTexture() ? obj->texture().get() : nullptr;
+        const std::weak_ptr<Material> objectMaterial = obj->material();
 
         if (const MeshObject* meshObject = dynamic_cast<MeshObject*>(obj.get())) {
             if (!meshObject->hasMesh()) {
@@ -813,7 +823,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 if (!faceValid) {
                     continue;
                 }
-                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
+                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
             }
         } else if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
             std::array<Vertex, 3> localVertices;
@@ -823,7 +833,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                 localVertices[i].texCoord = tri->getTexCoords()[i];
                 localVertices[i].normal = tri->getNormal();
             }
-            rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
+            rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
         }else if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
             const auto& sphereVertices = sphere->vertices();
             const auto& sphereIndices = sphere->indices();
@@ -845,7 +855,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                         localVertices[i].normal = glm::normalize(normal);
                     }
                 }
-                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture);
+                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
             }
         }else if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
             const auto& cubeVertices = cube->vertices();
@@ -865,7 +875,7 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
                         localVertices[i].normal = glm::normalize(normal);
                     }
                 }
-                rasterizeLocalTriangle(model, mvp, localVertices);
+                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
             }
         }
     }

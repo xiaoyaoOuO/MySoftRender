@@ -30,6 +30,7 @@ struct Fragment
     size_t bufferIndex; // 在帧缓冲中的线性索引
     float depth; // 深度值
     Color color; // 颜色
+    std::weak_ptr<Material> material; // 材质属性
     glm::vec3 normal; // 法线向量
     glm::vec3 worldPos; // 世界空间位置
     float shadowVisibility = 1.0f; // 阴影可见性（1=全亮，0=全阴影）
@@ -614,7 +615,8 @@ public:
         const std::array<Vertex, 3>& vertices,
         const Texture2D* texture = nullptr,
         const std::array<glm::vec3, 3>* worldPositions = nullptr,
-        const std::array<glm::vec3, 3>* worldNormals = nullptr);
+        const std::array<glm::vec3, 3>* worldNormals = nullptr,
+        std::weak_ptr<Material> material = std::weak_ptr<Material>());
 
     // 执行三角形的 MSAA 光栅化，完成 sample 级覆盖测试、深度测试与像素级 resolve。由 Rasterizer::Rasterize_Triangle 传入缓冲区与 shadePixel 回调；回调接收重心坐标 (w0, w1, w2) 并返回该像素的线性空间颜色。
     template <typename ShadePixelFunc>
@@ -625,7 +627,8 @@ public:
         const std::array<glm::vec3, 3>* worldNormals,
         int activeSampleCount,
         const Vec2* sampleOffsets,
-        ShadePixelFunc&& shadePixel);
+        ShadePixelFunc&& shadePixel,
+        std::weak_ptr<Material> material = std::weak_ptr<Material>());
 
 private:
     static constexpr int kMsaaSampleCount = 4;
@@ -658,7 +661,8 @@ void Rasterizer::RasterizeTriangleMSAA(
     const std::array<glm::vec3, 3>* worldNormals,
     int activeSampleCount,
     const Vec2* sampleOffsets,
-    ShadePixelFunc&& shadePixel)
+    ShadePixelFunc&& shadePixel,
+    std::weak_ptr<Material> material)
 {
     int minX = static_cast<int>(std::floor(std::min({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
     int maxX = static_cast<int>(std::ceil(std::max({vertexs[0].x, vertexs[1].x, vertexs[2].x})));
@@ -787,6 +791,7 @@ void Rasterizer::RasterizeTriangleMSAA(
             frag.bufferIndex = pixelIndex;
             frag.depth = resolvedDepth;
             frag.color = ToColor(ResolvePixelColor(pixelIndex, sampleColorBuffer_, activeSampleCount));
+            frag.material = material;
 
             // 根据光源阴影贴图判断当前片段是否被遮挡。将阴影采样逻辑提取到独立函数，减少主光栅化流程中的 if 嵌套层级。
             if (worldPositions != nullptr && Scene::instance) {

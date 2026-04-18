@@ -9,6 +9,8 @@
 #include "backends/imgui_impl_sdlrenderer2.h"
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
 
 #include <glm/geometric.hpp>
 
@@ -226,17 +228,106 @@ void DebugUI::drawSkyboxTab(Scene& scene)
     ImGui::Checkbox("Diffuse IBL", &scene.iblSettings.enableDiffuseIBL);
     ImGui::DragFloat("Diffuse IBL Intensity", &scene.iblSettings.diffuseIntensity, 0.01f, 0.0f, 8.0f, "%.3f");
 
+    const char* specularLodModeItems[] = {"Auto (roughness -> LOD)", "Manual"};
+    int specularLodMode = static_cast<int>(scene.iblSettings.specularLodMode);
+    if (ImGui::Combo("Specular LOD Mode", &specularLodMode, specularLodModeItems, IM_ARRAYSIZE(specularLodModeItems))) {
+        scene.iblSettings.specularLodMode = static_cast<SpecularLodMode>(specularLodMode);
+    }
+
+    if (scene.iblSettings.specularLodMode == SpecularLodMode::Manual) {
+        ImGui::SliderInt("Specular Manual LOD", &scene.iblSettings.specularManualLod, 0, 5);
+    }
+
+    ImGui::Checkbox("Specular IBL", &scene.iblSettings.enableSpecularIBL);
+    ImGui::DragFloat("Specular IBL Intensity", &scene.iblSettings.specularIntensity, 0.01f, 0.0f, 8.0f, "%.3f");
+
     // 展示当前环境贴图来源，便于确认 Diffuse IBL 采样链路是否生效。
     const char* skyboxLabel = scene.skyboxName.empty() ? "None" : scene.skyboxName.c_str();
     ImGui::Text("Skybox: %s", skyboxLabel);
-    const bool hasIblEnvMap = (scene.iblIrradianceMap && scene.iblIrradianceMap->valid())
+
+    bool hasSpecularLodMaps = false;
+    for (const auto& lodMap : scene.IBLSpecLodMaps) {
+        if (lodMap && lodMap->valid()) {
+            hasSpecularLodMaps = true;
+            break;
+        }
+    }
+
+    const bool hasDiffuseIblEnvMap = (scene.iblIrradianceMap && scene.iblIrradianceMap->valid())
         || (scene.skyboxTexture && scene.skyboxTexture->valid());
-    if (!hasIblEnvMap) {
+    const bool hasSpecularIblEnvMap = hasSpecularLodMaps
+        || (scene.iblPrefilterMap && scene.iblPrefilterMap->valid())
+        || (scene.skyboxTexture && scene.skyboxTexture->valid());
+    const bool hasBrdfLut = (scene.iblBrdfLut && scene.iblBrdfLut->valid());
+
+    if (!scene.iblSpecLodRootPath.empty()) {
+        ImGui::Text("Specular LOD Root: %s", scene.iblSpecLodRootPath.c_str());
+    } else {
+        ImGui::TextUnformatted("Specular LOD Root: not found (runtime fallback enabled)");
+    }
+
+    ImGui::SeparatorText("Specular LOD Status");
+    for (int lod = 0; lod < 6; ++lod) {
+        const int sourceLod = scene.IBLSpecLodFallbackSources[static_cast<std::size_t>(lod)];
+        const bool hasSpecLod = scene.IBLSpecLodMaps[static_cast<std::size_t>(lod)]
+            && scene.IBLSpecLodMaps[static_cast<std::size_t>(lod)]->valid();
+        if (hasSpecLod && sourceLod == lod) {
+            ImGui::Text("LOD%d: ready", lod);
+        } else if (hasSpecLod && sourceLod >= 0) {
+            ImGui::Text("LOD%d: fallback -> LOD%d", lod, sourceLod);
+        } else if (scene.iblPrefilterMap && scene.iblPrefilterMap->valid()) {
+            ImGui::Text("LOD%d: fallback -> prefilter", lod);
+        } else if (scene.skyboxTexture && scene.skyboxTexture->valid()) {
+            ImGui::Text("LOD%d: fallback -> skybox", lod);
+        } else {
+            ImGui::Text("LOD%d: missing", lod);
+        }
+    }
+
+    // 使用当前选中对象材质 roughness 预览本帧可能请求的 Specular LOD 档位。
+    float previewRoughness = 0.5f;
+    if (!scene.objects.empty()) {
+        const int maxIndex = static_cast<int>(scene.objects.size()) - 1;
+        const int objectIndex = std::clamp(selectedObjectIndex_, 0, maxIndex);
+        Object* selectedObject = scene.objects[static_cast<std::size_t>(objectIndex)].get();
+        if (selectedObject) {
+            std::shared_ptr<Material> selectedMaterial = selectedObject->material();
+            if (selectedMaterial) {
+                previewRoughness = std::clamp(selectedMaterial->roughness, 0.0f, 1.0f);
+            }
+        }
+    }
+
+    const int requestedSpecularLod = std::clamp(static_cast<int>(std::round(previewRoughness * 5.0f)), 0, 5);
+    ImGui::Text("Current Specular LOD: roughness %.3f -> request LOD%d", previewRoughness, requestedSpecularLod);
+
+    const int sourceLod = scene.IBLSpecLodFallbackSources[static_cast<std::size_t>(requestedSpecularLod)];
+    const bool hasRequestedSpecLod = scene.IBLSpecLodMaps[static_cast<std::size_t>(requestedSpecularLod)]
+        && scene.IBLSpecLodMaps[static_cast<std::size_t>(requestedSpecularLod)]->valid();
+    if (hasRequestedSpecLod && sourceLod >= 0) {
+        ImGui::Text("Current Specular Source: LOD%d", sourceLod);
+    } else if (scene.iblPrefilterMap && scene.iblPrefilterMap->valid()) {
+        ImGui::TextUnformatted("Current Specular Source: prefilter");
+    } else if (scene.skyboxTexture && scene.skyboxTexture->valid()) {
+        ImGui::TextUnformatted("Current Specular Source: skybox");
+    } else {
+        ImGui::TextUnformatted("Current Specular Source: missing");
+    }
+
+    if (!hasDiffuseIblEnvMap) {
         ImGui::TextUnformatted("No valid env map. Diffuse IBL falls back to constant ambient.");
+    }
+    if (!hasSpecularIblEnvMap) {
+        ImGui::TextUnformatted("No valid spec env source. Specular IBL will be disabled.");
+    }
+    if (!hasBrdfLut) {
+        ImGui::TextUnformatted("BRDF LUT missing. Specular IBL uses approximation fallback.");
     }
 
     // 对 IBL 参数做下限保护，避免 UI 误操作导致负能量光照。
     scene.iblSettings.diffuseIntensity = std::max(scene.iblSettings.diffuseIntensity, 0.0f);
+    scene.iblSettings.specularIntensity = std::max(scene.iblSettings.specularIntensity, 0.0f);
+    scene.iblSettings.specularManualLod = std::clamp(scene.iblSettings.specularManualLod, 0, 5);
     if (pendingSkyboxIndex_ >= 0) {
         ImGui::TextUnformatted("Skybox switch queued. It will apply this frame.");
     }
@@ -389,6 +480,21 @@ void DebugUI::drawModelTab(Scene& scene)
     if (ImGui::DragFloat3("Scale##model", &scale.x, 0.01f)) {
         selectedObject->setScale(ClampScaleMin(scale));
     }
+
+    ImGui::SeparatorText("Material");
+
+    // 每个对象独立持有材质参数；首次编辑时按需创建默认材质，避免仍回退到场景级粗糙度/金属度。
+    std::shared_ptr<Material> selectedMaterial = selectedObject->material();
+    if (!selectedMaterial) {
+        selectedMaterial = std::make_shared<Material>();
+        selectedObject->setMaterial(selectedMaterial);
+    }
+
+    ImGui::DragFloat("Roughness##material", &selectedMaterial->roughness, 0.005f, 0.0f, 1.0f, "%.3f");
+    ImGui::DragFloat("Metallic##material", &selectedMaterial->metallic, 0.005f, 0.0f, 1.0f, "%.3f");
+
+    selectedMaterial->roughness = std::clamp(selectedMaterial->roughness, 0.0f, 1.0f);
+    selectedMaterial->metallic = std::clamp(selectedMaterial->metallic, 0.0f, 1.0f);
 }
 
 void DebugUI::drawThreadingTab(SoftwareRenderer& renderer)
