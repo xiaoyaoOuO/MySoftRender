@@ -113,6 +113,7 @@
 - **会话 074**：对 Specular IBL 实现做代码审查并修复关键逻辑错位：统一 6 级 LOD 边界（UI/预览/手动档位全改为 `0~5`）、修复 `InitializeSkyboxSelection` 的 fallback 数组缺项、修复 `BuildScenePresetTwo` 材质创建内存泄漏、将 `ComputeIblLighting` 默认粗糙度改为 0.5 并修正能量合成（`albedo*kD*diffuse + specular`），同时在 `CookTorrance_Shader` 恢复直射光与阴影合成避免场景回归；构建验证通过。关键文件：`include/Material.h` `src/main.cpp` `src/DebugUI.cpp` `CONVERSATION_LOG.md`。
 - **会话 075**：按“仅修改 LUT 生成”要求，将 `skyboxLutBaker` 的 `SkyboxLutGenerator` 从环境颜色模糊采样改为传统 Split-Sum BRDF 积分 LUT（R=scale，G=bias，B=0），并保持原输出文件路径不变；随后批量执行离线烘焙，覆盖 `assets/cubemap/*/ibl/skybox_lut.png` 与 `assets/cubemap/*/ibl/skybox_lut.ppm` 全部 8 个文件。关键文件：`utility/SkyboxLutGenerator.cpp` `utility/SkyboxLutGenerator.h` `utility/SkyboxLutBakerMain.cpp` `assets/cubemap/*/ibl/skybox_lut.png` `assets/cubemap/*/ibl/skybox_lut.ppm` `CONVERSATION_LOG.md`。
 - **会话 076**：修复 BRDF LUT 使用中的黑边问题：将运行时 BRDF LUT 采样坐标修正为 `sample(roughness, NdotV)`（与离线生成轴一致），并将离线积分几何项切换到 IBL 公式 `k = roughness^2 / 2`；随后重新构建并批量覆盖 `assets/cubemap/*/ibl/skybox_lut.png/.ppm`。同时校验新 LUT：蓝通道范围 `B=[0,0]`、CornellBox 的纯黑像素数为 0。关键文件：`src/main.cpp` `utility/SkyboxLutGenerator.cpp` `assets/cubemap/*/ibl/skybox_lut.png` `assets/cubemap/*/ibl/skybox_lut.ppm` `CONVERSATION_LOG.md`。
+- **会话 077**：根据当前实现重写 `TODO.md` 与 `README.md`：清理历史冗余与过时表述，统一 IBL/Specular LOD 六级命名、离线工具说明、构建运行入口与资源回退链，文档结构改为“现状基线 + 可执行任务”。关键文件：`TODO.md` `README.md` `CONVERSATION_LOG.md`。
 
 ---
 
