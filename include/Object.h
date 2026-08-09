@@ -8,6 +8,14 @@
 
 class Texture2D;
 
+enum class ObjectType : uint8_t
+{
+    Cube,
+    Sphere,
+    Mesh,
+    Triangle
+};
+
 /**
  * @brief 代表场景中一个物体的基类，包含位置、旋转和缩放属性。
  */
@@ -55,6 +63,8 @@ public:
     void setMaterial(const std::shared_ptr<Material>& material) { material_ = material; }
     const std::shared_ptr<Material>& material() const { return material_; }
 
+    const ObjectType& type() const { return type_; }
+
     glm::mat4 modelMatrix() const
     {
         if(!modelMatrixDirty){
@@ -77,6 +87,7 @@ protected:
     glm::vec3 scale;    // 物体的缩放
     std::shared_ptr<Texture2D> texture_; // 对象绑定的纹理资源（可为空）
     bool castShadow_ = true; // 对象是否参与阴影投射
+    ObjectType type_ = ObjectType::Mesh; // 对象类型（子类构造函数应显式覆盖）
     std::shared_ptr<Material> material_; // 对象的材质属性（可为空）
 
     //缓存model矩阵以及dirty标志位，避免每帧重复计算

@@ -10,19 +10,21 @@ mySoftRender 是一个基于 C++20 的 CPU 软光栅渲染器，当前实现已�
   - 背面剔除与线框叠加
 - 场景与模型
   - `Triangle` / `Cube` / `Sphere` / `MeshObject(OBJ)`
-  - 对象级纹理与对象级材质（baseColor/roughness/metallic）
-  - 内置两套场景预设
+  - 对象级纹理与对象级材质（albedo/roughness/metallic）
+  - 内置两套场景预设（Scene1: Mary+地板+点光源; Scene2: 无纹理球体+天空盒+IBL）
+  - 默认片元着色器：CookTorrance（含 IBL 合成）
 - 光照与阴影
   - 世界空间光照（含直射 + 环境）
   - 点光阴影（6 面深度）与非点光阴影（2D 深度）
   - 阴影过滤模式：Hard / PCF / PCSS（参数入口已接入）
 - Skybox 与 IBL
   - 自动扫描 `assets/cubemap/*` 并加载天空盒
-  - Diffuse IBL（irradiance 或 skybox 回退）
+  - Diffuse IBL（irradiance cubemap，缺失时回退 skybox 模糊采样）
   - Specular IBL（Split-Sum：Specular LOD + BRDF LUT）
 - 调试与并行
-  - Dear ImGui 面板（Skybox/Shadow/Light/Model/Threading/Status）
+  - Dear ImGui 面板（Scene 下拉切换 + Skybox/Shadow/Light/Model/Threading/Status 六个 Tab）
   - 片元着色单线程/线程池并行切换
+  - 实时帧率与线程池统计显示
 - 离线工具
   - `skyboxSpecularLodBaker`：生成 6 档 Specular LOD cubemap
   - `skyboxLutBaker`：生成 BRDF LUT（PNG/PPM）
@@ -80,12 +82,12 @@ cmake --build build --target skyboxLutBaker -j
 
 ### VS Code 任务
 
-- `cmake configure`
-- `cmake build`
-- `cmake configure release`
-- `cmake build release`
-- `run soft renderer`
-- `run soft renderer release`
+- `cmake configure` — Debug 构建配置
+- `cmake build` — Debug 构建（默认构建任务，快捷键 `Ctrl+Shift+B`）
+- `cmake configure release` — Release 构建配置
+- `cmake build release` — Release 构建
+- `run soft renderer` — 构建并运行 Debug 版
+- `run soft renderer release` — 构建并运行 Release 版
 
 ## 运行时操作
 
@@ -113,15 +115,18 @@ assets/cubemap/<SkyboxName>/
 
 - Diffuse IBL
   - `assets/cubemap/<SkyboxName>/ibl/irradiance/`
-- Specular IBL（6 档）
+  - 缺失时回退 skybox 的方向模糊采样（`sampleLod`），无需额外资源
+- Specular IBL（6 档 lod0~lod5）
   - 优先：`assets/cubemap/<SkyboxName>/<SkyboxName>_cov/lod0~lod5/`
   - 兼容：`assets/cubemap/<SkyboxName>/ibl/specular_lod/lod0~lod5/`
   - 兼容：`assets/cubemap/<SkyboxName>/ibl/prefilter_lod/lod0~lod5/`
 - 预过滤回退源
   - `assets/cubemap/<SkyboxName>/ibl/prefilter/`
-- BRDF LUT（2D）
+  - 缺失时回退 skybox 的 `sampleLod`，最终回退黑色
+- BRDF LUT（2D 纹理）
   - 推荐命名：`assets/cubemap/<SkyboxName>/ibl/<SkyboxName>_lut.png`
-  - 兼容命名：`skybox_lut.*`、`brdf_lut.*`、`brdfLUT.png`、`brdf.png`
+  - 兼容命名（按优先级）：`<SkyboxName>_lut.*`、`skybox_lut.*`、`brdf_lut.*`、`brdfLUT.png`、`brdf.png`
+  - 缺失时使用解析近似函数替代
 
 ### Specular IBL 运行时回退链
 
@@ -134,7 +139,7 @@ assets/cubemap/<SkyboxName>/
 
 ### 1) skyboxSpecularLodBaker
 
-作用：对单个或批量天空盒生成 6 档 Specular LOD 立方体贴图（`lod0~lod5`）。
+作用：对单个或批量天空盒生成 6 档 Specular LOD 立方体贴图（`lod0~lod5`），lod0 无模糊，lod1~lod5 逐级增大卷积锥角。
 
 单天空盒：
 
@@ -148,17 +153,49 @@ assets/cubemap/<SkyboxName>/
 ./build/skyboxSpecularLodBaker --cubemap-root assets/cubemap --size 64 --samples "1,64,96,128,160,192"
 ```
 
+主要参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--cubemap-dir <dir>` | （必选其一） | 单天空盒目录 |
+| `--cubemap-root <dir>` | （必选其一） | 批量处理根目录下所有天空盒 |
+| `--size <int>` | 64 | 每面输出分辨率（正方形） |
+| `--samples <csv>` | `1,64,96,128,160,192` | lod0~lod5 各级采样数 |
+| `--angles-deg <csv>` | `0,10,18,30,45,62` | lod0~lod5 各级锥角（度） |
+| `--seed <uint>` | 随机 | 固定随机数种子 |
+| `--help` | — | 打印帮助信息 |
+
+输出布局：`<SkyboxDir>/<SkyboxName>_cov/lod0~lod5/{posx,negx,posy,negy,posz,negz}.png`
+
 ### 2) skyboxLutBaker
 
-作用：生成 Split-Sum BRDF LUT（`x=roughness`，`y=NdotV`）。
+作用：生成 Split-Sum BRDF 积分 LUT（R=scale, G=bias, B=0），横轴 `x=NdotV`，纵轴 `y=roughness`。该 LUT 与具体天空盒无关，是纯数学积分结果。
+
+> **注意**：`--cubemap-dir` 参数仅为历史兼容保留，BRDF LUT 生成不依赖天空盒内容。
 
 示例：
 
 ```bash
-./build/skyboxLutBaker --cubemap-dir assets/cubemap/Skybox --output output/skybox_lut.png --width 128 --height 128 --samples 256
+./build/skyboxLutBaker --cubemap-dir assets/cubemap/Skybox --output output/skybox_lut.png --width 128 --height 128 --samples 64
 ```
+
+主要参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--cubemap-dir <dir>` | （必填） | 历史兼容，不影响输出结果 |
+| `--output <path>` | （必填） | 输出路径，支持 `.png` / `.ppm` |
+| `--width <int>` | 128 | LUT 宽度 |
+| `--height <int>` | 128 | LUT 高度 |
+| `--samples <int>` | 64 | BRDF 积分采样数 |
+| `--blur-min <float>` | — | 历史遗留，已忽略 |
+| `--blur-max <float>` | — | 历史遗留，已忽略 |
+| `--help` | — | 打印帮助信息 |
 
 ## 当前工程状态
 
-- 当前 CMake 未接入自动化测试（`enable_testing/add_test`）。
-- 当前仓库未配置独立 lint 目标。
+- 构建系统：CMake 3.16+，Win64 MSYS2 MinGW 为主要开发环境
+- 当前未接入自动化测试（`enable_testing/add_test`）
+- 当前未配置独立 lint 目标
+- 编译标准：C++20，Release 启用 `-O3 -march=native -ffast-math`
+- 代码注释规范：中文 Doxygen（`@brief` / `@param` / `@return`），详见 `Restrict.md`

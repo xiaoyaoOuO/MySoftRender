@@ -16,6 +16,7 @@ public:
         const glm::vec3& scale = glm::vec3(1.0f, 1.0f, 1.0f))
         : Object(center, rotation, scale), size_(size), color_(color)
     {
+        type_ = ObjectType::Cube;
         rebuildVertices();
     }
 

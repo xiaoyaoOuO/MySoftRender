@@ -9,7 +9,7 @@
 class MeshObject : public Object
 {
 public:
-    MeshObject() = default;
+    MeshObject() { type_ = ObjectType::Mesh; }
 
     MeshObject(
         const ObjMeshData& mesh,
@@ -19,6 +19,7 @@ public:
         : Object(position, rotation, scale)
         , mesh_(mesh)
     {
+        type_ = ObjectType::Mesh;
     }
 
     // 设置网格数据。传入 ObjLoader 输出的 ObjMeshData，渲染器会按 indices 遍历并绘制三角形。

@@ -7,6 +7,10 @@
 #include "Object.h"
 #include "Triangle.h"
 #include "Light.h"
+#include "MeshObject.h"
+#include "Sphere.h"
+#include "Cube.h"
+
 using std::vector;
 using std::unique_ptr;  
 
@@ -84,12 +88,4 @@ public:
     int lightProxyObjectIndex = -1; // 光源可视化代理对象在 objects 中的索引（-1 表示无代理）
 
     inline static Scene* instance = nullptr; // 场景单例实例
-
-public:
-    void RotateObjects(float deltaTime)
-    {
-        // for (const auto& obj : objects) {
-        //     obj->rotate(glm::vec3(0.0f, 30.0f * deltaTime, 0.0f)); // 每秒绕Y轴旋转30度
-        // }
-    }
 };

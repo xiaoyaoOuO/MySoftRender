@@ -26,6 +26,7 @@ Sphere::Sphere(
     , subdivisions_(std::max(subdivisions, 0))
     , color_(glm::clamp(color, glm::vec3(0.0f), glm::vec3(1.0f)))
 {
+    type_ = ObjectType::Sphere;
     rebuildMesh();
 }
 

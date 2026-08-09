@@ -1697,8 +1697,6 @@ void UpdateSceneForFrame(
         && scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]) {
         scene.objects[static_cast<std::size_t>(scene.lightProxyObjectIndex)]->setPosition(scene.lights[0]->position());
     }
-
-    scene.RotateObjects(deltaTime);
 }
 
 // 执行一帧渲染与 UI 呈现。

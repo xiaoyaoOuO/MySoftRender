@@ -37,6 +37,7 @@ public:
 
         // 计算法线向量
         normal = glm::normalize(glm::cross(glm::vec3(v1 - v0), glm::vec3(v2 - v0)));
+        type_ = ObjectType::Triangle;
     }
 
     Triangle(const std::array<Vertex, 3>& vertices) : Object()
@@ -47,6 +48,7 @@ public:
             texCoords[i] = vertices[i].texCoord;
         }
         normal = glm::normalize(glm::cross(glm::vec3(vertexs[1] - vertexs[0]), glm::vec3(vertexs[2] - vertexs[0])));
+        type_ = ObjectType::Triangle;
     }
 
     const glm::vec4* getVertexs() const { return vertexs; }

@@ -81,6 +81,11 @@ public:
 
     static std::uint32_t packColor(const Color& color);
 
+    void RasterizeMesh(const MeshObject* meshObject, const glm::mat4& model, const glm::mat4& mvp, const Texture2D* objectTexture, std::weak_ptr<Material> objectMaterial);
+    void RasterizeTriangle(const Triangle* triangle, const glm::mat4& model, const glm::mat4& mvp, const Texture2D* objectTexture, std::weak_ptr<Material> objectMaterial);
+    void RasterizeSphere(const Sphere* sphere, const glm::mat4& model, const glm::mat4& mvp, const Texture2D* objectTexture, std::weak_ptr<Material> objectMaterial);
+    void RasterizeCube(const Cube* cube, const glm::mat4& model, const glm::mat4& mvp, const Texture2D* objectTexture, std::weak_ptr<Material> objectMaterial);
+
 private:
     int width_;
     int height_;

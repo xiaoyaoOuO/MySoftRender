@@ -599,6 +599,94 @@ std::uint32_t SoftwareRenderer::packColor(const Color& color)
         | static_cast<std::uint32_t>(color.b);
 }
 
+void SoftwareRenderer::RasterizeMesh(const MeshObject* meshObject, const glm::mat4& model, const glm::mat4& mvp, const Texture2D* objectTexture, std::weak_ptr<Material> objectMaterial)
+{
+    if (!meshObject || !meshObject->hasMesh()) {
+        return;
+    }
+
+    const ObjMeshData& mesh = meshObject->mesh();
+
+    std::array<Vertex, 3> localVertices;
+    for(auto & face : mesh.indices)
+    {
+        bool faceValid = true;
+        for (int i = 0; i < 3; ++i) {
+            const std::uint32_t vertexIndex = face[i];
+            if (vertexIndex >= mesh.vertices.size()) {
+                faceValid = false;
+                break;
+            }
+            localVertices[i] = mesh.vertices[vertexIndex];
+        }
+        if (!faceValid) {
+            continue;
+        }
+        rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
+    }
+}
+
+void SoftwareRenderer::RasterizeTriangle(const Triangle *tri, const glm::mat4 &model, const glm::mat4 &mvp, const Texture2D *objectTexture, std::weak_ptr<Material> objectMaterial)
+{
+    std::array<Vertex, 3> localVertices;
+    for (int i = 0; i < 3; ++i) {
+        localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
+        localVertices[i].color = tri->getColors()[i];
+        localVertices[i].texCoord = tri->getTexCoords()[i];
+        localVertices[i].normal = tri->getNormal();
+    }
+    rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
+}
+
+void SoftwareRenderer::RasterizeSphere(const Sphere *sphere, const glm::mat4 &model, const glm::mat4 &mvp, const Texture2D *objectTexture, std::weak_ptr<Material> objectMaterial)
+{
+    const auto& sphereVertices = sphere->vertices();
+    const auto& sphereIndices = sphere->indices();
+    const auto& sphereColors = sphere->vertexColors();
+    const auto& sphereUVs = sphere->vertexUVs();
+
+    std::array<Vertex, 3> localVertices;
+    for (const glm::uvec3& face : sphereIndices) {
+        for (int i = 0; i < 3; ++i) {
+            int idx = face[i];
+            localVertices[i].position = glm::vec3(sphereVertices[idx]);
+            localVertices[i].color = sphereColors[idx];
+            localVertices[i].texCoord = sphereUVs[idx];
+
+            const glm::vec3 normal = glm::vec3(sphereVertices[idx]);
+            if (glm::dot(normal, normal) <= 1e-12f) {
+                localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            } else {
+                localVertices[i].normal = glm::normalize(normal);
+            }
+        }
+        rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
+    }
+}
+
+void SoftwareRenderer::RasterizeCube(const Cube *cube, const glm::mat4 &model, const glm::mat4 &mvp, const Texture2D *objectTexture, std::weak_ptr<Material> objectMaterial)
+{
+    const auto& cubeVertices = cube->vertices();
+    const auto& cubeIndices = cube->indices();
+    const auto& cubeColor = cube->color();
+
+    std::array<Vertex, 3> localVertices;
+    for (const glm::uvec3& face : cubeIndices) {
+        for (int i = 0; i < 3; ++i) {
+            localVertices[i].position = cubeVertices[face[i]];
+            localVertices[i].color = cubeColor;
+
+            const glm::vec3 normal = cubeVertices[face[i]];
+            if (glm::dot(normal, normal) <= 1e-12f) {
+                localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            } else {
+                localVertices[i].normal = glm::normalize(normal);
+            }
+        }
+        rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
+    }
+}
+
 void SoftwareRenderer::putPixel(int x, int y, const Color& color)
 {
     // 将二维坐标转换为线性索引，并写入一个打包像素。
@@ -800,83 +888,24 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         const glm::mat4 mvp = viewProjection * model;
         const Texture2D* objectTexture = obj->hasTexture() ? obj->texture().get() : nullptr;
         const std::weak_ptr<Material> objectMaterial = obj->material();
+        const ObjectType objType = obj->type();
 
-        if (const MeshObject* meshObject = dynamic_cast<MeshObject*>(obj.get())) {
-            if (!meshObject->hasMesh()) {
+        switch (objType)
+        {
+            case ObjectType::Mesh:
+                RasterizeMesh(static_cast<const MeshObject*>(obj.get()), model, mvp, objectTexture, objectMaterial);
+                break;
+            case ObjectType::Triangle:
+                RasterizeTriangle(static_cast<const Triangle*>(obj.get()), model, mvp, objectTexture, objectMaterial);
+                break;
+            case ObjectType::Sphere:
+                RasterizeSphere(static_cast<const Sphere*>(obj.get()), model, mvp, objectTexture, objectMaterial);
+                break;
+            case ObjectType::Cube:
+                RasterizeCube(static_cast<const Cube*>(obj.get()), model, mvp, objectTexture, objectMaterial);
+                break;
+            default:
                 continue;
-            }
-
-            const ObjMeshData& mesh = meshObject->mesh();
-
-            for(auto & face : mesh.indices)
-            {
-                std::array<Vertex, 3> localVertices;
-                bool faceValid = true;
-                for (int i = 0; i < 3; ++i) {
-                    const std::uint32_t vertexIndex = face[i];
-                    if (vertexIndex >= mesh.vertices.size()) {
-                        faceValid = false;
-                        break;
-                    }
-                    localVertices[i] = mesh.vertices[vertexIndex];
-                }
-                if (!faceValid) {
-                    continue;
-                }
-                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
-            }
-        } else if (const Triangle* tri = dynamic_cast<Triangle*>(obj.get())) {
-            std::array<Vertex, 3> localVertices;
-            for (int i = 0; i < 3; ++i) {
-                localVertices[i].position = glm::vec3(tri->getVertexs()[i]);
-                localVertices[i].color = tri->getColors()[i];
-                localVertices[i].texCoord = tri->getTexCoords()[i];
-                localVertices[i].normal = tri->getNormal();
-            }
-            rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
-        }else if (const Sphere* sphere = dynamic_cast<Sphere*>(obj.get())) {
-            const auto& sphereVertices = sphere->vertices();
-            const auto& sphereIndices = sphere->indices();
-            const auto& sphereColors = sphere->vertexColors();
-            const auto& sphereUVs = sphere->vertexUVs();
-
-            for (const glm::uvec3& face : sphereIndices) {
-                std::array<Vertex, 3> localVertices;
-                for (int i = 0; i < 3; ++i) {
-                    int idx = face[i];
-                    localVertices[i].position = glm::vec3(sphereVertices[idx]);
-                    localVertices[i].color = sphereColors[idx];
-                    localVertices[i].texCoord = sphereUVs[idx];
-
-                    const glm::vec3 normal = glm::vec3(sphereVertices[idx]);
-                    if (glm::dot(normal, normal) <= 1e-12f) {
-                        localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
-                    } else {
-                        localVertices[i].normal = glm::normalize(normal);
-                    }
-                }
-                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
-            }
-        }else if(const Cube* cube = dynamic_cast<Cube*>(obj.get())) {
-            const auto& cubeVertices = cube->vertices();
-            const auto& cubeIndices = cube->indices();
-            const auto& cubeColor = cube->color();
-
-            for (const glm::uvec3& face : cubeIndices) {
-                std::array<Vertex, 3> localVertices;
-                for (int i = 0; i < 3; ++i) {
-                    localVertices[i].position = cubeVertices[face[i]];
-                    localVertices[i].color = cubeColor;
-
-                    const glm::vec3 normal = cubeVertices[face[i]];
-                    if (glm::dot(normal, normal) <= 1e-12f) {
-                        localVertices[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
-                    } else {
-                        localVertices[i].normal = glm::normalize(normal);
-                    }
-                }
-                rasterizeLocalTriangle(model, mvp, localVertices, objectTexture, objectMaterial);
-            }
         }
     }
 
@@ -884,16 +913,6 @@ void SoftwareRenderer::DrawScene(const Scene& scene)
         // 在几何光栅化后仅补全未命中前景的背景像素，减少天空盒路径的无效采样。
         drawSkyboxBackground(scene, &rasterizer_.zBuffer());
     }
-
-    //Fragment Shader：遍历光栅化阶段生成的片段，进行深度测试和颜色写入。
-    // for(const auto& frag : rasterizer_.fragments())
-    // {
-    //     if (fragmentShader_) {
-    //         fragmentShader_(colorBuffer_, frag, scene);
-    //     } else {
-    //         putPixel(frag.bufferIndex, frag.color);
-    //     }
-    // }
 
     // 使用线程池并行执行片元着色，避免每帧创建/销毁线程带来的额外开销。
     const auto& fragments = rasterizer_.fragments();
